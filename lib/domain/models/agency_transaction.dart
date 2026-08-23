@@ -6,6 +6,7 @@ enum AgencyTransactionType {
   officeUpgrade,
   trainingGroundUpgrade,
   representationTermination,
+  agencyEvent,
 }
 
 extension AgencyTransactionTypeLabel on AgencyTransactionType {
@@ -19,6 +20,7 @@ extension AgencyTransactionTypeLabel on AgencyTransactionType {
           'Training ground upgrade',
         AgencyTransactionType.representationTermination =>
           'Representation ended',
+        AgencyTransactionType.agencyEvent => 'Agency event',
       };
 }
 

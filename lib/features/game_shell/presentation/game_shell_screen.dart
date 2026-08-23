@@ -7,6 +7,7 @@ import '../../../app/router/app_router.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
+import '../../../domain/services/season_calendar.dart';
 import '../../email/presentation/email_screen.dart';
 import '../../finance/presentation/finance_screen.dart';
 import '../../my_players/presentation/my_players_screen.dart';
@@ -104,10 +105,13 @@ class _GameShellScreenState extends ConsumerState<GameShellScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           _SimulationBar(
-            season: game.seasonLabel(game.currentSeason),
             week: game.currentWeek,
+            year: game.currentYear,
             money: game.agent.money,
+            weeklyBalance: game.currentWeekAgencyBalance,
             reputation: game.agent.reputation,
+            transferWindow:
+                const SeasonCalendar().transferWindowForWeek(game.currentWeek),
             isSimulating: _isSimulating,
             onNextWeek: _simulateOneWeek,
           ),
@@ -154,8 +158,14 @@ class _GameShellScreenState extends ConsumerState<GameShellScreen> {
     setState(() => _isSimulating = true);
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
-    ref.read(gameControllerProvider.notifier).simulateNextWeek();
-    if (mounted) setState(() => _isSimulating = false);
+    final summary =
+        ref.read(gameControllerProvider.notifier).simulateNextWeek();
+    if (!mounted) return;
+    setState(() => _isSimulating = false);
+    final eventId = summary?.newAgencyEventId;
+    if (eventId != null) {
+      await context.push(AppRoutes.eventDetails(eventId));
+    }
   }
 
   Future<void> _saveAndExit(BuildContext context) async {
@@ -178,115 +188,167 @@ class _GameShellScreenState extends ConsumerState<GameShellScreen> {
 
 class _SimulationBar extends StatelessWidget {
   const _SimulationBar({
-    required this.season,
     required this.week,
+    required this.year,
     required this.money,
+    required this.weeklyBalance,
     required this.reputation,
+    required this.transferWindow,
     required this.isSimulating,
     required this.onNextWeek,
   });
 
-  final String season;
   final int week;
+  final int year;
   final double money;
+  final double weeklyBalance;
   final int reputation;
+  final TransferWindowStatus? transferWindow;
   final bool isSimulating;
   final VoidCallback onNextWeek;
 
   @override
-  Widget build(BuildContext context) => Container(
-        height: 46,
-        padding: const EdgeInsets.fromLTRB(11, 5, 7, 5),
-        decoration: const BoxDecoration(
-          color: AppColors.panelAlt,
-          border: Border(
-            top: BorderSide(color: AppColors.slate),
-            bottom: BorderSide(color: AppColors.slate),
-          ),
+  Widget build(BuildContext context) {
+    final transferLabel = transferWindow == null
+        ? 'No'
+        : '${transferWindow!.elapsedWeeks}/${transferWindow!.totalWeeks}';
+    return Container(
+      height: 56,
+      padding: const EdgeInsets.fromLTRB(11, 5, 7, 5),
+      decoration: const BoxDecoration(
+        color: AppColors.panelAlt,
+        border: Border(
+          top: BorderSide(color: AppColors.slate),
+          bottom: BorderSide(color: AppColors.slate),
         ),
-        child: Row(
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _StatusLine(
+                  label: 'Money',
+                  value:
+                      '${GameFormatters.compactCurrency(money)} / ${_signedCurrency(weeklyBalance)}',
+                  valueColor:
+                      weeklyBalance < 0 ? AppColors.danger : AppColors.teal,
+                ),
+                _StatusLine(
+                  label: 'Week',
+                  value: '$week/$year  ·  REP ${_compactCount(reputation)}',
+                ),
+                _StatusLine(
+                  label: 'Transfer Season',
+                  value: transferLabel,
+                  valueColor: transferWindow == null
+                      ? AppColors.muted
+                      : AppColors.amber,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 5),
+          SizedBox(
+            width: 124,
+            height: 38,
+            child: FilledButton(
+              key: const Key('nextWeekButton'),
+              onPressed: isSimulating ? null : onNextWeek,
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(5),
+                ),
+              ),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 140),
+                child: isSimulating
+                    ? const Row(
+                        key: ValueKey('simulating'),
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            'SIMULATING',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      )
+                    : const Row(
+                        key: ValueKey('nextWeek'),
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'NEXT WEEK',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          SizedBox(width: 3),
+                          Icon(Icons.arrow_forward_rounded, size: 15),
+                        ],
+                      ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusLine extends StatelessWidget {
+  const _StatusLine({
+    required this.label,
+    required this.value,
+    this.valueColor = AppColors.paper,
+  });
+
+  final String label;
+  final String value;
+  final Color valueColor;
+
+  @override
+  Widget build(BuildContext context) => Text.rich(
+        key: Key('simulationStatus-$label'),
+        TextSpan(
+          text: '$label: ',
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: AppColors.muted,
+                fontSize: 10,
+                height: 1.35,
+                fontWeight: FontWeight.w700,
+              ),
           children: [
-            SizedBox(
-              width: 104,
-              child: Text(
-                '$season  ·  W$week',
-                maxLines: 1,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: AppColors.paper,
-                      fontSize: 8,
-                      letterSpacing: 0.35,
-                    ),
-              ),
-            ),
-            Expanded(
-              child: Text(
-                '${GameFormatters.compactCurrency(money)}  ·  REP ${_compactCount(reputation)}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: AppColors.muted,
-                      fontSize: 7.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            SizedBox(
-              width: 112,
-              height: 34,
-              child: FilledButton(
-                key: const Key('nextWeekButton'),
-                onPressed: isSimulating ? null : onNextWeek,
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                ),
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 140),
-                  child: isSimulating
-                      ? const Row(
-                          key: ValueKey('simulating'),
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                            SizedBox(width: 6),
-                            Text(
-                              'SIMULATING',
-                              style: TextStyle(
-                                fontSize: 8,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ],
-                        )
-                      : const Row(
-                          key: ValueKey('nextWeek'),
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              'NEXT WEEK',
-                              style: TextStyle(
-                                fontSize: 8.5,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            SizedBox(width: 3),
-                            Icon(Icons.arrow_forward_rounded, size: 15),
-                          ],
-                        ),
-                ),
+            TextSpan(
+              text: value,
+              style: TextStyle(
+                color: valueColor,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.1,
               ),
             ),
           ],
         ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       );
 }
+
+String _signedCurrency(double value) =>
+    '${value > 0 ? '+' : ''}${GameFormatters.compactCurrency(value)}';
 
 String _compactCount(int value) {
   if (value >= 1000000) {

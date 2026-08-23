@@ -49,6 +49,22 @@ class TalentsScreen extends ConsumerWidget {
                           fontSize: 8,
                         ),
                   ),
+                  IconButton(
+                    key: const Key('clearTalentPoolButton'),
+                    tooltip: 'Clear talent pool',
+                    visualDensity: VisualDensity.compact,
+                    constraints:
+                        const BoxConstraints.tightFor(width: 34, height: 30),
+                    padding: EdgeInsets.zero,
+                    onPressed: talents.isEmpty
+                        ? null
+                        : () => _confirmClearPool(
+                              context,
+                              ref,
+                              talents.length,
+                            ),
+                    icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                  ),
                   const Icon(Icons.chevron_right_rounded,
                       color: AppColors.muted, size: 18),
                 ],
@@ -66,21 +82,24 @@ class TalentsScreen extends ConsumerWidget {
           ],
         ),
         Expanded(
-          child: ListView.builder(
-            key: const Key('talentList'),
-            padding: const EdgeInsets.only(bottom: 12),
-            itemCount: talents.length,
-            itemBuilder: (context, index) {
-              final player = talents[index];
-              return _TalentRow(
-                player: player,
-                isAlternate: index.isOdd,
-                onOpen: () => context.push(AppRoutes.playerDetails(player.id)),
-                onRecruit: () => _recruit(context, ref, player),
-                canRecruit: !game.isAgencyAtClientCapacity,
-              );
-            },
-          ),
+          child: talents.isEmpty
+              ? const _EmptyTalentPool()
+              : ListView.builder(
+                  key: const Key('talentList'),
+                  padding: const EdgeInsets.only(bottom: 12),
+                  itemCount: talents.length,
+                  itemBuilder: (context, index) {
+                    final player = talents[index];
+                    return _TalentRow(
+                      player: player,
+                      isAlternate: index.isOdd,
+                      onOpen: () =>
+                          context.push(AppRoutes.playerDetails(player.id)),
+                      onRecruit: () => _recruit(context, ref, player),
+                      canRecruit: !game.isAgencyAtClientCapacity,
+                    );
+                  },
+                ),
         ),
       ],
     );
@@ -102,6 +121,81 @@ class TalentsScreen extends ConsumerWidget {
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
   }
+
+  Future<void> _confirmClearPool(
+    BuildContext context,
+    WidgetRef ref,
+    int talentCount,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Clear talent pool?'),
+        content: Text(
+          'Remove all $talentCount unsigned prospects? Your clients and club players will not be affected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('confirmClearTalentPoolButton'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.danger,
+              foregroundColor: AppColors.paper,
+            ),
+            child: const Text('Clear pool'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    final result = ref.read(gameControllerProvider.notifier).clearTalentPool();
+    if (!context.mounted) return;
+    final message = switch (result) {
+      TalentPoolActionResult.success => 'Talent pool cleared.',
+      TalentPoolActionResult.noActiveGame =>
+        'Start a career before managing talents.',
+      TalentPoolActionResult.alreadyEmpty => 'Talent pool is already empty.',
+    };
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _EmptyTalentPool extends StatelessWidget {
+  const _EmptyTalentPool();
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.travel_explore_rounded,
+                  color: AppColors.muted, size: 30),
+              const SizedBox(height: 8),
+              Text(
+                'Talent pool empty',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 3),
+              Text(
+                'Scouts and your Training Ground can discover new prospects.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: AppColors.muted),
+              ),
+            ],
+          ),
+        ),
+      );
 }
 
 class _TalentRow extends StatelessWidget {

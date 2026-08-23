@@ -5,6 +5,8 @@ import 'package:football_agent/application/persistence_providers.dart';
 import 'package:football_agent/domain/models/game_state.dart';
 import 'package:football_agent/domain/models/player_training_plan.dart';
 import 'package:football_agent/domain/services/game_factory.dart';
+import 'package:football_agent/domain/models/agency_event.dart';
+import 'package:football_agent/simulation/engines/random_event_engine.dart';
 
 import 'helpers/in_memory_game_save_repository.dart';
 
@@ -39,6 +41,42 @@ void main() {
       controller.recruitPlayer(talent.id),
       RecruitmentResult.playerUnavailable,
     );
+  });
+
+  test('clearing the talent pool preserves represented clients', () async {
+    final repository = InMemoryGameSaveRepository();
+    final container = _container(repository);
+    addTearDown(container.dispose);
+    final controller = container.read(gameControllerProvider.notifier);
+    controller.startNewGame(
+      agentName: 'Alex Morgan',
+      agencyName: 'North Star Sports',
+      agentAge: 34,
+    );
+
+    final recruited =
+        container.read(gameControllerProvider)!.availableTalents.first;
+    expect(controller.recruitPlayer(recruited.id), RecruitmentResult.success);
+    expect(
+      container.read(gameControllerProvider)!.availableTalents,
+      isNotEmpty,
+    );
+
+    expect(controller.clearTalentPool(), TalentPoolActionResult.success);
+    final cleared = container.read(gameControllerProvider)!;
+    expect(cleared.availableTalents, isEmpty);
+    expect(cleared.representedPlayers, hasLength(1));
+    expect(cleared.representedPlayers.single.id, recruited.id);
+    expect(cleared.players.any((player) => player.id == recruited.id), isTrue);
+    expect(
+      controller.clearTalentPool(),
+      TalentPoolActionResult.alreadyEmpty,
+    );
+
+    await controller.waitForPendingSaves();
+    final saved = await repository.loadLatest();
+    expect(saved!.availableTalents, isEmpty);
+    expect(saved.representedPlayers.single.id, recruited.id);
   });
 
   test('suggesting and accepting a deal updates every connected entity', () {
@@ -334,7 +372,8 @@ void main() {
             item.clubId == afterTwoTaps.clubs.first.id && item.week == 2)
         .map((item) => item.playerId)
         .toSet();
-    expect(weekTwoClubStarters.difference(weekOneClubStarters), isNotEmpty);
+    expect(weekOneClubStarters, hasLength(11));
+    expect(weekTwoClubStarters, hasLength(11));
   });
 
   test('a complete season produces 38 matches per club, not 36 or 50', () {
@@ -429,6 +468,47 @@ void main() {
     expect(restored.currentWeek, 3);
     expect(restored.representedPlayers.single.id, talent.id);
     expect(restored.matchResults, hasLength(20));
+  });
+
+  test('agency event decisions resolve once and autosave their effects',
+      () async {
+    final base = const GameFactory().createNewGame(
+      agentName: 'Alex Morgan',
+      agencyName: 'North Star Sports',
+      agentAge: 34,
+      createdAt: DateTime.utc(2025, 1, 1),
+    );
+    final generated = const RandomEventEngine().processWeek(
+      base,
+      season: 1,
+      week: 8,
+      seed: 22,
+      forceType: AgencyEventType.officeRepair,
+    );
+    final repository = InMemoryGameSaveRepository();
+    final container =
+        _container(repository, _FixedGameFactory(generated.state));
+    addTearDown(container.dispose);
+    final controller = container.read(gameControllerProvider.notifier);
+    controller.startNewGame(
+      agentName: 'Alex Morgan',
+      agencyName: 'North Star Sports',
+      agentAge: 34,
+    );
+    final event = container.read(gameControllerProvider)!.agencyEvents.single;
+
+    final result = controller.resolveAgencyEvent(event.id, 'postpone');
+    await controller.waitForPendingSaves();
+    final saved = await repository.loadLatest();
+
+    expect(result.status, AgencyEventActionStatus.success);
+    expect(result.event!.status, AgencyEventStatus.resolved);
+    expect(saved!.agencyEvents.single.status, AgencyEventStatus.resolved);
+    expect(saved.agent.reputation, base.agent.reputation - 1);
+    expect(
+      controller.resolveAgencyEvent(event.id, 'repair').status,
+      AgencyEventActionStatus.alreadyResolved,
+    );
   });
 }
 

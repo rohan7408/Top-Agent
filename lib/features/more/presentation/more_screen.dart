@@ -62,6 +62,15 @@ class MoreScreen extends ConsumerWidget {
           accent: AppColors.ratingBlue,
           onTap: () => context.push(AppRoutes.clubs),
         ),
+        _MoreLinkRow(
+          key: const Key('moreWorldTransfersButton'),
+          icon: Icons.swap_horiz_rounded,
+          title: 'Recent transfers',
+          subtitle: 'Latest completed moves and all-time record fees',
+          value: '${game.transfers.length}',
+          accent: AppColors.amber,
+          onTap: () => context.push(AppRoutes.transfers),
+        ),
       ],
     );
   }

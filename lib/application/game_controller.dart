@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'persistence_providers.dart';
 import '../domain/models/game_state.dart';
 import '../domain/models/agency_transaction.dart';
+import '../domain/models/agency_event.dart';
 import '../domain/models/club_offer.dart';
 import '../domain/models/game_email.dart';
 import '../domain/models/scout.dart';
@@ -12,12 +13,15 @@ import '../domain/services/game_balance.dart';
 import '../domain/repositories/game_save_repository.dart';
 import '../simulation/engines/deal_engine.dart';
 import '../simulation/engines/offer_engine.dart';
+import '../simulation/engines/random_event_engine.dart';
 import '../simulation/game_engine.dart';
 
 final gameFactoryProvider = Provider<GameFactory>((ref) => const GameFactory());
 final offerEngineProvider = Provider<OfferEngine>((ref) => const OfferEngine());
 final dealEngineProvider = Provider<DealEngine>((ref) => const DealEngine());
 final gameEngineProvider = Provider<GameEngine>((ref) => const GameEngine());
+final randomEventEngineProvider =
+    Provider<RandomEventEngine>((ref) => const RandomEventEngine());
 
 final gameControllerProvider =
     NotifierProvider<GameController, GameState?>(GameController.new);
@@ -28,6 +32,12 @@ enum RecruitmentResult {
   playerNotFound,
   playerUnavailable,
   officeFull,
+}
+
+enum TalentPoolActionResult {
+  success,
+  noActiveGame,
+  alreadyEmpty,
 }
 
 enum SuggestionStatus {
@@ -97,6 +107,28 @@ enum TrainingPlanActionResult {
   unavailable,
 }
 
+enum AgencyEventActionStatus {
+  success,
+  noActiveGame,
+  eventNotFound,
+  invalidChoice,
+  alreadyResolved,
+}
+
+class AgencyEventActionResult {
+  const AgencyEventActionResult({
+    required this.status,
+    this.event,
+    this.outcome,
+    this.succeeded,
+  });
+
+  final AgencyEventActionStatus status;
+  final AgencyEvent? event;
+  final String? outcome;
+  final bool? succeeded;
+}
+
 class GameController extends Notifier<GameState?> {
   Future<void> _saveQueue = Future<void>.value();
   Object? _lastSaveError;
@@ -152,6 +184,40 @@ class GameController extends Notifier<GameState?> {
     );
     _scheduleAutoSave();
     return RecruitmentResult.success;
+  }
+
+  TalentPoolActionResult clearTalentPool() {
+    final currentGame = state;
+    if (currentGame == null) return TalentPoolActionResult.noActiveGame;
+    final talentIds =
+        currentGame.availableTalents.map((player) => player.id).toSet();
+    if (talentIds.isEmpty) return TalentPoolActionResult.alreadyEmpty;
+
+    state = currentGame.copyWith(
+      players: currentGame.players
+          .where((player) => !talentIds.contains(player.id))
+          .toList(growable: false),
+      offers: currentGame.offers
+          .where((offer) => !talentIds.contains(offer.playerId))
+          .toList(growable: false),
+      emails: currentGame.emails
+          .where((email) => !talentIds.contains(email.playerId))
+          .toList(growable: false),
+      injuries: currentGame.injuries
+          .where((injury) => !talentIds.contains(injury.playerId))
+          .toList(growable: false),
+      playerPerformances: currentGame.playerPerformances
+          .where((item) => !talentIds.contains(item.playerId))
+          .toList(growable: false),
+      playerSeasonStats: currentGame.playerSeasonStats
+          .where((item) => !talentIds.contains(item.playerId))
+          .toList(growable: false),
+      trainingPlans: currentGame.trainingPlans
+          .where((plan) => !talentIds.contains(plan.playerId))
+          .toList(growable: false),
+    );
+    _scheduleAutoSave();
+    return TalentPoolActionResult.success;
   }
 
   SuggestionResult suggestPlayer(String playerId) {
@@ -511,6 +577,55 @@ class GameController extends Notifier<GameState?> {
     state = result.state;
     _scheduleAutoSave();
     return result.summary;
+  }
+
+  AgencyEventActionResult resolveAgencyEvent(
+    String eventId,
+    String choiceId,
+  ) {
+    final currentGame = state;
+    if (currentGame == null) {
+      return const AgencyEventActionResult(
+        status: AgencyEventActionStatus.noActiveGame,
+      );
+    }
+    final event = currentGame.agencyEventById(eventId);
+    if (event == null) {
+      return const AgencyEventActionResult(
+        status: AgencyEventActionStatus.eventNotFound,
+      );
+    }
+    if (event.status != AgencyEventStatus.pending) {
+      return AgencyEventActionResult(
+        status: AgencyEventActionStatus.alreadyResolved,
+        event: event,
+      );
+    }
+    if (!event.choices.any((choice) => choice.id == choiceId)) {
+      return AgencyEventActionResult(
+        status: AgencyEventActionStatus.invalidChoice,
+        event: event,
+      );
+    }
+    final resolution = ref.read(randomEventEngineProvider).resolve(
+          currentGame,
+          eventId: eventId,
+          choiceId: choiceId,
+        );
+    if (resolution == null) {
+      return AgencyEventActionResult(
+        status: AgencyEventActionStatus.invalidChoice,
+        event: event,
+      );
+    }
+    state = resolution.state;
+    _scheduleAutoSave();
+    return AgencyEventActionResult(
+      status: AgencyEventActionStatus.success,
+      event: resolution.event,
+      outcome: resolution.outcome,
+      succeeded: resolution.succeeded,
+    );
   }
 
   void markEmailRead(String emailId) {

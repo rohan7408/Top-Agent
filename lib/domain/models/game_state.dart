@@ -1,4 +1,5 @@
 import 'agent.dart';
+import 'agency_event.dart';
 import 'agency_transaction.dart';
 import 'agency_office.dart';
 import 'club.dart';
@@ -21,7 +22,7 @@ import 'transfer_record.dart';
 import 'training_ground.dart';
 
 class GameState {
-  static const int currentSchemaVersion = 11;
+  static const int currentSchemaVersion = 13;
 
   GameState({
     required this.agent,
@@ -48,6 +49,7 @@ class GameState {
     List<ContractEvent> contractEvents = const [],
     List<PlayerTrainingPlan> trainingPlans = const [],
     List<AgencyTransaction> agencyTransactions = const [],
+    List<AgencyEvent> agencyEvents = const [],
   })  : players = List.unmodifiable(players),
         clubs = List.unmodifiable(clubs),
         leagues = List.unmodifiable(leagues),
@@ -65,7 +67,8 @@ class GameState {
         injuries = List.unmodifiable(injuries),
         contractEvents = List.unmodifiable(contractEvents),
         trainingPlans = List.unmodifiable(trainingPlans),
-        agencyTransactions = List.unmodifiable(agencyTransactions);
+        agencyTransactions = List.unmodifiable(agencyTransactions),
+        agencyEvents = List.unmodifiable(agencyEvents);
 
   final int schemaVersion;
   final int careerStartYear;
@@ -91,10 +94,20 @@ class GameState {
   final List<ContractEvent> contractEvents;
   final List<PlayerTrainingPlan> trainingPlans;
   final List<AgencyTransaction> agencyTransactions;
+  final List<AgencyEvent> agencyEvents;
 
   int get currentWeek => agent.currentWeek;
   int get currentSeason => agent.currentSeason;
+  int get currentYear => careerStartYear + currentSeason - 1;
   int get currentAbsoluteWeek => ((currentSeason - 1) * 50) + currentWeek;
+
+  double get currentWeekAgencyBalance => agencyTransactions
+      .where(
+        (transaction) =>
+            transaction.season == currentSeason &&
+            transaction.week == currentWeek,
+      )
+      .fold(0, (total, transaction) => total + transaction.amount);
 
   String seasonLabel(int season) {
     final start = careerStartYear + season - 1;
@@ -132,6 +145,17 @@ class GameState {
 
   bool get isAgencyAtClientCapacity =>
       representedPlayers.length >= office.clientCapacity;
+
+  List<AgencyEvent> get pendingAgencyEvents => agencyEvents
+      .where((event) => event.status == AgencyEventStatus.pending)
+      .toList(growable: false);
+
+  AgencyEvent? agencyEventById(String eventId) {
+    for (final event in agencyEvents) {
+      if (event.id == eventId) return event;
+    }
+    return null;
+  }
 
   PlayerInjury? activeInjuryForPlayer(String playerId) {
     for (final injury in injuries.reversed) {
@@ -304,6 +328,7 @@ class GameState {
     List<ContractEvent>? contractEvents,
     List<PlayerTrainingPlan>? trainingPlans,
     List<AgencyTransaction>? agencyTransactions,
+    List<AgencyEvent>? agencyEvents,
   }) {
     return GameState(
       schemaVersion: schemaVersion,
@@ -330,6 +355,7 @@ class GameState {
       contractEvents: contractEvents ?? this.contractEvents,
       trainingPlans: trainingPlans ?? this.trainingPlans,
       agencyTransactions: agencyTransactions ?? this.agencyTransactions,
+      agencyEvents: agencyEvents ?? this.agencyEvents,
     );
   }
 
@@ -361,6 +387,7 @@ class GameState {
         'trainingPlans': trainingPlans.map((item) => item.toJson()).toList(),
         'agencyTransactions':
             agencyTransactions.map((item) => item.toJson()).toList(),
+        'agencyEvents': agencyEvents.map((item) => item.toJson()).toList(),
       };
 
   factory GameState.fromJson(Map<String, Object?> json) {
@@ -448,6 +475,11 @@ class GameState {
                     (item! as Map).cast<String, Object?>(),
                   ))
               .toList(),
+      agencyEvents: ((json['agencyEvents'] as List<Object?>?) ?? const [])
+          .map((item) => AgencyEvent.fromJson(
+                (item! as Map).cast<String, Object?>(),
+              ))
+          .toList(),
     );
   }
 

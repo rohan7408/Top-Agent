@@ -45,10 +45,7 @@ void main() {
     expect(trained.speed, greaterThan(talent.speed));
     expect(trained.fatigue, 13);
     expect(plan.progress, lessThan(30));
-    expect(
-      result.state.emails.first.subject,
-      '${talent.name} completes a training block',
-    );
+    expect(result.state.emails, isEmpty);
   });
 
   test('injury pauses both training progress and training fatigue', () {

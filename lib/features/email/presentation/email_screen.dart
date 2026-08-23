@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_colors.dart';
+import '../../../app/router/app_router.dart';
 import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
 import '../../../core/widgets/compact_data_table.dart';
@@ -9,6 +11,7 @@ import '../../../core/widgets/section_placeholder.dart';
 import '../../../domain/models/club_offer.dart';
 import '../../../domain/models/game_email.dart';
 import '../../../domain/models/game_state.dart';
+import '../../../domain/models/agency_event.dart';
 
 class EmailScreen extends ConsumerWidget {
   const EmailScreen({super.key});
@@ -24,8 +27,14 @@ class EmailScreen extends ConsumerWidget {
         .where((email) => _isAgencyRelevant(game, email))
         .toList(growable: false);
     final unreadCount = emails.where((email) => !email.isRead).length;
+    final pendingEvents = game.pendingAgencyEvents;
+    final eventHistory = game.agencyEvents
+        .where((event) => event.status != AgencyEventStatus.pending)
+        .toList(growable: false)
+        .reversed
+        .toList(growable: false);
 
-    if (offers.isEmpty && emails.isEmpty) {
+    if (offers.isEmpty && emails.isEmpty && game.agencyEvents.isEmpty) {
       return const SectionPlaceholder(
         icon: Icons.mark_email_unread_outlined,
         title: 'Inbox clear',
@@ -37,24 +46,33 @@ class EmailScreen extends ConsumerWidget {
       children: [
         _InboxSummary(
           unreadCount: unreadCount,
-          actionCount: offers.length,
-          totalCount: emails.length,
+          actionCount: offers.length + pendingEvents.length,
+          totalCount: emails.length + game.agencyEvents.length,
         ),
         Expanded(
           child: ListView(
             key: const Key('inboxList'),
             padding: const EdgeInsets.only(bottom: 16),
             children: [
-              if (offers.isNotEmpty) ...[
+              if (offers.isNotEmpty || pendingEvents.isNotEmpty) ...[
                 CompactSectionBar(
                   title: 'Action required',
-                  trailing: '${offers.length} OFFERS',
+                  trailing: '${offers.length + pendingEvents.length} PENDING',
                   accent: AppColors.amber,
                 ),
+                for (var index = 0; index < pendingEvents.length; index++)
+                  _AgencyEventRow(
+                    event: pendingEvents[index],
+                    game: game,
+                    isAlternate: index.isOdd,
+                    onTap: () => context.push(
+                      AppRoutes.eventDetails(pendingEvents[index].id),
+                    ),
+                  ),
                 for (var index = 0; index < offers.length; index++)
                   _OfferRow(
                     offer: offers[index],
-                    isAlternate: index.isOdd,
+                    isAlternate: (index + pendingEvents.length).isOdd,
                     playerName: game.players
                         .firstWhere(
                             (player) => player.id == offers[index].playerId)
@@ -82,6 +100,21 @@ class EmailScreen extends ConsumerWidget {
                     },
                   ),
               ],
+              if (eventHistory.isNotEmpty) ...[
+                CompactSectionBar(
+                  title: 'Decision history',
+                  trailing: '${eventHistory.length} EVENTS',
+                ),
+                for (var index = 0; index < eventHistory.length; index++)
+                  _AgencyEventRow(
+                    event: eventHistory[index],
+                    game: game,
+                    isAlternate: index.isOdd,
+                    onTap: () => context.push(
+                      AppRoutes.eventDetails(eventHistory[index].id),
+                    ),
+                  ),
+              ],
             ],
           ),
         ),
@@ -90,6 +123,7 @@ class EmailScreen extends ConsumerWidget {
   }
 
   bool _isAgencyRelevant(GameState game, GameEmail email) {
+    if (email.id.startsWith('email-training-')) return false;
     if (email.playerId == null) return true;
     final player = game.players
         .where((candidate) => candidate.id == email.playerId)
@@ -137,6 +171,93 @@ class EmailScreen extends ConsumerWidget {
     );
   }
 }
+
+class _AgencyEventRow extends StatelessWidget {
+  const _AgencyEventRow({
+    required this.event,
+    required this.game,
+    required this.isAlternate,
+    required this.onTap,
+  });
+
+  final AgencyEvent event;
+  final GameState game;
+  final bool isAlternate;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = event.status == AgencyEventStatus.pending;
+    final accent = _eventOutcomeColor(event.outcome);
+    return InkWell(
+      key: Key('agencyEventRow-${event.id}'),
+      onTap: onTap,
+      child: Container(
+        height: pending ? 58 : 53,
+        decoration: BoxDecoration(
+          color: isAlternate ? AppColors.panelAlt : AppColors.navy,
+          border: Border(
+            left: BorderSide(color: accent, width: 3),
+            bottom: const BorderSide(color: AppColors.slate),
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          children: [
+            Icon(_eventOutcomeIcon(event.outcome), color: accent, size: 18),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    event.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight:
+                              pending ? FontWeight.w800 : FontWeight.w600,
+                        ),
+                  ),
+                  Text(
+                    pending
+                        ? '${game.seasonLabel(event.season)} W${event.week} · Decision required'
+                        : '${game.seasonLabel(event.resolvedSeason ?? event.season)} W${event.resolvedWeek ?? event.week} · ${event.outcomeSummary ?? 'Event closed'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: AppColors.muted, fontSize: 9),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded,
+                color: AppColors.muted, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Color _eventOutcomeColor(AgencyEventOutcome outcome) => switch (outcome) {
+      AgencyEventOutcome.pending => AppColors.amber,
+      AgencyEventOutcome.succeeded => AppColors.teal,
+      AgencyEventOutcome.failed => AppColors.danger,
+      AgencyEventOutcome.recorded => AppColors.ratingBlue,
+      AgencyEventOutcome.expired => AppColors.muted,
+    };
+
+IconData _eventOutcomeIcon(AgencyEventOutcome outcome) => switch (outcome) {
+      AgencyEventOutcome.pending => Icons.priority_high_rounded,
+      AgencyEventOutcome.succeeded => Icons.check_circle_outline_rounded,
+      AgencyEventOutcome.failed => Icons.cancel_outlined,
+      AgencyEventOutcome.recorded => Icons.task_alt_rounded,
+      AgencyEventOutcome.expired => Icons.timer_off_outlined,
+    };
 
 class _InboxSummary extends StatelessWidget {
   const _InboxSummary({

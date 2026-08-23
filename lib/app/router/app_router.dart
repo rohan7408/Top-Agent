@@ -10,6 +10,8 @@ import '../../features/matches/presentation/match_report_screen.dart';
 import '../../features/new_game/presentation/new_game_screen.dart';
 import '../../features/office/presentation/office_management_screen.dart';
 import '../../features/players/presentation/player_detail_screen.dart';
+import '../../features/events/presentation/agency_event_screen.dart';
+import '../../features/transfers/presentation/world_transfers_screen.dart';
 
 abstract final class AppRoutes {
   static const mainMenu = '/';
@@ -19,10 +21,13 @@ abstract final class AppRoutes {
   static const players = '/game/players';
   static const matches = '/game/matches';
   static const office = '/game/office';
+  static const events = '/game/events';
+  static const transfers = '/game/transfers';
 
   static String clubDetails(String clubId) => '$clubs/$clubId';
   static String playerDetails(String playerId) => '$players/$playerId';
   static String matchDetails(String matchId) => '$matches/$matchId';
+  static String eventDetails(String eventId) => '$events/$eventId';
 }
 
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -73,6 +78,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => MatchReportScreen(
           matchId: state.pathParameters['matchId']!,
         ),
+      ),
+      GoRoute(
+        path: '${AppRoutes.events}/:eventId',
+        builder: (context, state) => AgencyEventScreen(
+          eventId: state.pathParameters['eventId']!,
+        ),
+      ),
+      GoRoute(
+        path: AppRoutes.transfers,
+        builder: (context, state) => const WorldTransfersScreen(),
       ),
     ],
   );

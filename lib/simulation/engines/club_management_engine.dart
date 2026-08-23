@@ -7,6 +7,7 @@ import '../../domain/models/game_state.dart';
 import '../../domain/models/transfer_record.dart';
 import '../../domain/services/game_balance.dart';
 import '../../domain/services/squad_analysis_service.dart';
+import '../../domain/services/season_calendar.dart';
 
 class ClubManagementResult {
   const ClubManagementResult({
@@ -24,10 +25,12 @@ class ClubManagementEngine {
   const ClubManagementEngine({
     this.squadAnalysisService = const SquadAnalysisService(),
     this.balance = const GameBalance(),
+    this.seasonCalendar = const SeasonCalendar(),
   });
 
   final SquadAnalysisService squadAnalysisService;
   final GameBalance balance;
+  final SeasonCalendar seasonCalendar;
 
   ClubManagementResult processWeek(GameState game, {required int seed}) {
     var working = game.copyWith(
@@ -40,7 +43,7 @@ class ClubManagementEngine {
           .toList(growable: false),
     );
 
-    if (!_isTransferWindow(game.currentWeek)) {
+    if (!seasonCalendar.isTransferWindow(game.currentWeek)) {
       return ClubManagementResult(
         state: working,
         transfersCompleted: 0,
@@ -72,8 +75,6 @@ class ClubManagementEngine {
       contractsRenewed: contractsRenewed,
     );
   }
-
-  bool _isTransferWindow(int week) => (week >= 20 && week <= 24) || week >= 40;
 
   GameState? _attemptTransfer(GameState game, String buyerId, Random random) {
     final buyerIndex = game.clubs.indexWhere((club) => club.id == buyerId);

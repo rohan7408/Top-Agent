@@ -1,6 +1,5 @@
 import 'dart:math';
 
-import '../../domain/models/game_email.dart';
 import '../../domain/models/game_state.dart';
 import '../../domain/models/player.dart';
 import '../../domain/models/player_attributes.dart';
@@ -42,7 +41,6 @@ class TrainingEngine {
     const coachAbility = 0;
     var attributesImproved = 0;
     var overallsImproved = 0;
-    var emails = game.emails;
 
     final players = game.players.map((player) {
       final plan = plans[player.id];
@@ -76,25 +74,10 @@ class TrainingEngine {
             _focusRating(player, trained, effectiveFocus) >
                 _focusRating(player, attributes, effectiveFocus)) {
           final oldOverall = player.ability;
-          final oldFocus = _focusRating(player, attributes, effectiveFocus);
           attributes = trained;
           progress -= 100;
           attributesImproved++;
           if (newOverall > oldOverall) overallsImproved++;
-          emails = [
-            GameEmail(
-              id: 'email-training-s$nextSeason-w$nextWeek-${player.id}',
-              type: GameEmailType.world,
-              subject: '${player.name} completes a training block',
-              body:
-                  '${effectiveFocus.label} improved from $oldFocus to ${_focusRating(player, trained, effectiveFocus)}. Overall is now $newOverall.',
-              season: nextSeason,
-              week: nextWeek,
-              playerId: player.id,
-              clubId: player.clubId,
-            ),
-            ...emails,
-          ];
         } else {
           progress = 99;
         }
@@ -111,7 +94,6 @@ class TrainingEngine {
       state: game.copyWith(
         players: players,
         trainingPlans: plans.values.toList(growable: false),
-        emails: emails,
       ),
       attributesImproved: attributesImproved,
       overallsImproved: overallsImproved,

@@ -6,6 +6,7 @@ import '../domain/models/match_result.dart';
 import '../domain/models/player_match_performance.dart';
 import '../domain/models/player_injury.dart';
 import '../domain/models/player_season_stats.dart';
+import '../domain/services/season_calendar.dart';
 import 'engines/fixture_calendar_engine.dart';
 import 'engines/fatigue_engine.dart';
 import 'engines/club_management_engine.dart';
@@ -15,6 +16,7 @@ import 'engines/weekly_injury_engine.dart';
 import 'engines/agency_office_engine.dart';
 import 'engines/training_engine.dart';
 import 'engines/training_ground_engine.dart';
+import 'engines/random_event_engine.dart';
 
 enum SeasonPhase {
   playWeeks,
@@ -50,6 +52,7 @@ class WeekSimulationSummary {
     required this.talentsDiscovered,
     required this.trainingGroundTalents,
     required this.trainingImprovements,
+    this.newAgencyEventId,
   });
 
   final int simulatedWeek;
@@ -70,6 +73,7 @@ class WeekSimulationSummary {
   final int talentsDiscovered;
   final int trainingGroundTalents;
   final int trainingImprovements;
+  final String? newAgencyEventId;
 }
 
 class GameEngineResult {
@@ -90,6 +94,8 @@ class GameEngine {
     this.agencyOfficeEngine = const AgencyOfficeEngine(),
     this.trainingEngine = const TrainingEngine(),
     this.trainingGroundEngine = const TrainingGroundEngine(),
+    this.randomEventEngine = const RandomEventEngine(),
+    this.seasonCalendar = const SeasonCalendar(),
   });
 
   final MatchEngine matchEngine;
@@ -101,6 +107,8 @@ class GameEngine {
   final AgencyOfficeEngine agencyOfficeEngine;
   final TrainingEngine trainingEngine;
   final TrainingGroundEngine trainingGroundEngine;
+  final RandomEventEngine randomEventEngine;
+  final SeasonCalendar seasonCalendar;
 
   GameEngineResult simulateOneWeek(GameState game) {
     final simulatedWeek = game.currentWeek;
@@ -224,9 +232,15 @@ class GameEngine {
       standings: standingsWithNextSeason,
       fixtures: fixturesWithNextSeason,
     );
+    final eventWeek = randomEventEngine.processWeek(
+      updatedState,
+      season: nextSeason,
+      week: nextWeek,
+      seed: _simulationSeed(game),
+    );
 
     return GameEngineResult(
-      state: updatedState,
+      state: eventWeek.state,
       summary: WeekSimulationSummary(
         simulatedWeek: simulatedWeek,
         simulatedSeason: simulatedSeason,
@@ -246,6 +260,7 @@ class GameEngine {
         talentsDiscovered: officeWeek.talentsDiscovered,
         trainingGroundTalents: trainingGroundWeek.talentsDeveloped,
         trainingImprovements: trainingWeek.attributesImproved,
+        newAgencyEventId: eventWeek.newEventId,
       ),
     );
   }
@@ -279,9 +294,12 @@ class GameEngine {
   }
 
   SeasonPhase phaseForWeek(int week) {
-    if (week >= 40) return SeasonPhase.mainTransferWindow;
-    if (week >= 20 && week < 25) return SeasonPhase.midTransferWindow;
-    return SeasonPhase.playWeeks;
+    final window = seasonCalendar.transferWindowForWeek(week);
+    return switch (window?.kind) {
+      TransferWindowKind.main => SeasonPhase.mainTransferWindow,
+      TransferWindowKind.midSeason => SeasonPhase.midTransferWindow,
+      null => SeasonPhase.playWeeks,
+    };
   }
 
   int _simulationSeed(GameState game) {

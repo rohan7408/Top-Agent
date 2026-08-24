@@ -7,6 +7,8 @@ import '../domain/models/player_match_performance.dart';
 import '../domain/models/player_injury.dart';
 import '../domain/models/player_season_stats.dart';
 import '../domain/services/season_calendar.dart';
+import '../domain/services/agency_transaction_retention.dart';
+import '../domain/services/league_history_service.dart';
 import 'engines/fixture_calendar_engine.dart';
 import 'engines/fatigue_engine.dart';
 import 'engines/club_management_engine.dart';
@@ -16,7 +18,9 @@ import 'engines/weekly_injury_engine.dart';
 import 'engines/agency_office_engine.dart';
 import 'engines/training_engine.dart';
 import 'engines/training_ground_engine.dart';
+import 'engines/transfer_market_engine.dart';
 import 'engines/random_event_engine.dart';
+import 'engines/agency_trust_engine.dart';
 
 enum SeasonPhase {
   playWeeks,
@@ -94,8 +98,12 @@ class GameEngine {
     this.agencyOfficeEngine = const AgencyOfficeEngine(),
     this.trainingEngine = const TrainingEngine(),
     this.trainingGroundEngine = const TrainingGroundEngine(),
+    this.transferMarketEngine = const TransferMarketEngine(),
     this.randomEventEngine = const RandomEventEngine(),
+    this.transactionRetention = const AgencyTransactionRetention(),
+    this.agencyTrustEngine = const AgencyTrustEngine(),
     this.seasonCalendar = const SeasonCalendar(),
+    this.leagueHistoryService = const LeagueHistoryService(),
   });
 
   final MatchEngine matchEngine;
@@ -107,17 +115,25 @@ class GameEngine {
   final AgencyOfficeEngine agencyOfficeEngine;
   final TrainingEngine trainingEngine;
   final TrainingGroundEngine trainingGroundEngine;
+  final TransferMarketEngine transferMarketEngine;
   final RandomEventEngine randomEventEngine;
+  final AgencyTransactionRetention transactionRetention;
+  final AgencyTrustEngine agencyTrustEngine;
   final SeasonCalendar seasonCalendar;
+  final LeagueHistoryService leagueHistoryService;
 
   GameEngineResult simulateOneWeek(GameState game) {
     final simulatedWeek = game.currentWeek;
     final simulatedSeason = game.currentSeason;
     final phase = phaseForWeek(simulatedWeek);
-    final scheduledFixtures = game.fixturesForWeek(
-      simulatedSeason,
-      simulatedWeek,
-    );
+    final knownMatchIds = game.matchResults.map((result) => result.id).toSet();
+    final scheduledFixtures = game
+        .fixturesForWeek(
+          simulatedSeason,
+          simulatedWeek,
+        )
+        .where((fixture) => knownMatchIds.add('match-${fixture.id}'))
+        .toList(growable: false);
     final recoveredGame = fatigueEngine.recoverBeforeWeek(game);
     final batch = matchEngine.simulateFixtures(
       game: recoveredGame,
@@ -180,13 +196,16 @@ class GameEngine {
           ]
         : game.fixtures;
     final updatedOffers = _expireOldOffers(
-      game.offers,
+      clubManagement.state.offers,
       nextWeek: nextWeek,
       nextSeason: nextSeason,
     );
 
+    final historyState = isNewSeason
+        ? leagueHistoryService.captureCompletedSeason(clubManagement.state)
+        : clubManagement.state;
     final financiallySettledState = isNewSeason
-        ? _awardSeasonPrizeMoney(clubManagement.state)
+        ? _awardSeasonPrizeMoney(historyState)
         : clubManagement.state;
 
     final lifecycle = isNewSeason
@@ -232,15 +251,25 @@ class GameEngine {
       standings: standingsWithNextSeason,
       fixtures: fixturesWithNextSeason,
     );
-    final eventWeek = randomEventEngine.processWeek(
+    final marketWeek = transferMarketEngine.processWeek(
       updatedState,
+      seed: _simulationSeed(game),
+    );
+    final trustWeek = agencyTrustEngine.processWeek(
+      marketWeek,
+      nextSeason: nextSeason,
+      nextWeek: nextWeek,
+      seed: _simulationSeed(game),
+    );
+    final eventWeek = randomEventEngine.processWeek(
+      trustWeek.state,
       season: nextSeason,
       week: nextWeek,
       seed: _simulationSeed(game),
     );
 
     return GameEngineResult(
-      state: eventWeek.state,
+      state: transactionRetention.clean(eventWeek.state),
       summary: WeekSimulationSummary(
         simulatedWeek: simulatedWeek,
         simulatedSeason: simulatedSeason,
@@ -338,6 +367,9 @@ class GameEngine {
     GameState game,
     List<PlayerMatchPerformance> performances,
   ) {
+    final playersById = {
+      for (final player in game.players) player.id: player,
+    };
     final statsByKey = {
       for (final stats in game.playerSeasonStats)
         _statsKey(
@@ -348,7 +380,33 @@ class GameEngine {
         ): stats,
     };
 
+    final clubsById = {for (final club in game.clubs) club.id: club};
+    for (final player in game.players) {
+      final clubId = player.clubId;
+      if (clubId == null || player.isRetired) continue;
+      final leagueId = clubsById[clubId]?.leagueId;
+      if (leagueId == null) continue;
+      final key = _statsKey(
+        player.id,
+        clubId,
+        leagueId,
+        game.currentSeason,
+      );
+      statsByKey.putIfAbsent(
+        key,
+        () => PlayerSeasonStats(
+          playerId: player.id,
+          clubId: clubId,
+          leagueId: leagueId,
+          season: game.currentSeason,
+          overall: player.ability,
+          marketValue: player.value,
+        ),
+      );
+    }
+
     for (final performance in performances) {
+      final player = playersById[performance.playerId];
       final key = _statsKey(
         performance.playerId,
         performance.clubId,
@@ -361,8 +419,14 @@ class GameEngine {
             clubId: performance.clubId,
             leagueId: performance.leagueId,
             season: performance.season,
+            overall: player?.ability ?? 0,
+            marketValue: player?.value ?? 0,
           );
-      statsByKey[key] = current.applyPerformance(performance);
+      statsByKey[key] = current.applyPerformance(
+        performance,
+        overall: player?.ability,
+        marketValue: player?.value,
+      );
     }
     return List.unmodifiable(statsByKey.values);
   }
@@ -385,7 +449,8 @@ class GameEngine {
       if (offer.status != ClubOfferStatus.pending) return offer;
       final createdAbsoluteWeek =
           ((offer.createdSeason - 1) * 50) + offer.createdWeek;
-      return nextAbsoluteWeek - createdAbsoluteWeek >= 2
+      final lifetime = offer.isMarketMove ? 1 : 2;
+      return nextAbsoluteWeek - createdAbsoluteWeek >= lifetime
           ? offer.copyWith(status: ClubOfferStatus.expired)
           : offer;
     }).toList(growable: false);

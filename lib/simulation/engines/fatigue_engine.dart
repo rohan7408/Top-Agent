@@ -53,7 +53,8 @@ class FatigueEngine {
         );
         return player.copyWith(
           fatigue: (player.fatigue + matchLoad).clamp(0, 100),
-          consecutiveStarts: player.consecutiveStarts + 1,
+          consecutiveStarts:
+              performance.started ? player.consecutiveStarts + 1 : 0,
         );
       }).toList(growable: false),
     );

@@ -10,15 +10,27 @@ import '../domain/models/scout.dart';
 import '../domain/models/player_training_plan.dart';
 import '../domain/services/game_factory.dart';
 import '../domain/services/game_balance.dart';
+import '../domain/services/agency_transaction_retention.dart';
+import '../domain/services/agency_trust_calculator.dart';
+import '../domain/services/talent_pool_policy.dart';
 import '../domain/repositories/game_save_repository.dart';
 import '../simulation/engines/deal_engine.dart';
+import '../simulation/engines/club_listing_request_engine.dart';
 import '../simulation/engines/offer_engine.dart';
+import '../simulation/engines/offer_negotiation_engine.dart';
 import '../simulation/engines/random_event_engine.dart';
+import '../simulation/engines/agency_trust_engine.dart';
 import '../simulation/game_engine.dart';
 
 final gameFactoryProvider = Provider<GameFactory>((ref) => const GameFactory());
 final offerEngineProvider = Provider<OfferEngine>((ref) => const OfferEngine());
 final dealEngineProvider = Provider<DealEngine>((ref) => const DealEngine());
+final clubListingRequestEngineProvider = Provider<ClubListingRequestEngine>(
+  (ref) => const ClubListingRequestEngine(),
+);
+final offerNegotiationEngineProvider = Provider<OfferNegotiationEngine>(
+  (ref) => const OfferNegotiationEngine(),
+);
 final gameEngineProvider = Provider<GameEngine>((ref) => const GameEngine());
 final randomEventEngineProvider =
     Provider<RandomEventEngine>((ref) => const RandomEventEngine());
@@ -61,6 +73,47 @@ enum DealActionResult {
   noActiveGame,
 }
 
+enum ClubListingActionStatus {
+  success,
+  noActiveGame,
+  noActiveContract,
+  playerUnavailable,
+  alreadyListed,
+  transferWindowClosed,
+  permanentTransferTooSoon,
+  alreadyOnLoan,
+}
+
+enum ClubListingActionType { transfer, loan }
+
+class ClubListingActionResult {
+  const ClubListingActionResult({
+    required this.status,
+    this.recentSigningPenaltyApplied = false,
+  });
+
+  final ClubListingActionStatus status;
+  final bool recentSigningPenaltyApplied;
+}
+
+enum OfferNegotiationActionStatus {
+  accepted,
+  rejected,
+  withdrawn,
+  invalid,
+  noActiveGame,
+}
+
+class OfferNegotiationActionResult {
+  const OfferNegotiationActionResult({
+    required this.status,
+    this.acceptanceChance = 0,
+  });
+
+  final OfferNegotiationActionStatus status;
+  final double acceptanceChance;
+}
+
 enum ScoutActionResult {
   success,
   noActiveGame,
@@ -68,6 +121,7 @@ enum ScoutActionResult {
   notAvailable,
   officeFull,
   reputationTooLow,
+  trustTooLow,
   notEmployed,
 }
 
@@ -172,6 +226,12 @@ class GameController extends Notifier<GameState?> {
     updatedPlayers[playerIndex] = player.copyWith(
       agentId: currentGame.agent.id,
       isRecruited: true,
+      agentTrust: const AgencyTrustCalculator().initialPlayerTrust(
+        playerAbility: player.ability,
+        reputation: currentGame.agent.reputation,
+        officeLevel: currentGame.office.level,
+      ),
+      agencyRelationshipWeeks: 1,
     );
     state = currentGame.copyWith(
       players: updatedPlayers,
@@ -284,6 +344,99 @@ class GameController extends Notifier<GameState?> {
     return DealActionResult.success;
   }
 
+  ClubListingActionResult requestClubListing(
+    String playerId,
+    ClubListingActionType type,
+  ) {
+    final currentGame = state;
+    if (currentGame == null) {
+      return const ClubListingActionResult(
+        status: ClubListingActionStatus.noActiveGame,
+      );
+    }
+    final resolution = ref.read(clubListingRequestEngineProvider).resolve(
+          game: currentGame,
+          playerId: playerId,
+          type: type == ClubListingActionType.transfer
+              ? ClubListingType.transfer
+              : ClubListingType.loan,
+        );
+    final status = switch (resolution.status) {
+      ClubListingRequestStatus.accepted => ClubListingActionStatus.success,
+      ClubListingRequestStatus.noActiveContract =>
+        ClubListingActionStatus.noActiveContract,
+      ClubListingRequestStatus.playerUnavailable =>
+        ClubListingActionStatus.playerUnavailable,
+      ClubListingRequestStatus.alreadyListed =>
+        ClubListingActionStatus.alreadyListed,
+      ClubListingRequestStatus.transferWindowClosed =>
+        ClubListingActionStatus.transferWindowClosed,
+      ClubListingRequestStatus.permanentTransferTooSoon =>
+        ClubListingActionStatus.permanentTransferTooSoon,
+      ClubListingRequestStatus.alreadyOnLoan =>
+        ClubListingActionStatus.alreadyOnLoan,
+    };
+    if (status == ClubListingActionStatus.success) {
+      state = resolution.state;
+      _scheduleAutoSave();
+    }
+    return ClubListingActionResult(
+      status: status,
+      recentSigningPenaltyApplied: resolution.recentSigningPenaltyApplied,
+    );
+  }
+
+  OfferNegotiationActionResult negotiateOffer({
+    required String offerId,
+    required double weeklySalary,
+    required double agentFee,
+    required int contractLength,
+  }) {
+    final currentGame = state;
+    if (currentGame == null) {
+      return const OfferNegotiationActionResult(
+        status: OfferNegotiationActionStatus.noActiveGame,
+      );
+    }
+    final resolution = ref.read(offerNegotiationEngineProvider).evaluate(
+          game: currentGame,
+          offerId: offerId,
+          weeklySalary: weeklySalary,
+          agentFee: agentFee,
+          contractLength: contractLength,
+        );
+    final status = switch (resolution.status) {
+      OfferNegotiationStatus.accepted => OfferNegotiationActionStatus.accepted,
+      OfferNegotiationStatus.rejected => OfferNegotiationActionStatus.rejected,
+      OfferNegotiationStatus.withdrawn =>
+        OfferNegotiationActionStatus.withdrawn,
+      OfferNegotiationStatus.invalid => OfferNegotiationActionStatus.invalid,
+    };
+    if (status == OfferNegotiationActionStatus.invalid) {
+      return OfferNegotiationActionResult(
+        status: status,
+        acceptanceChance: resolution.acceptanceChance,
+      );
+    }
+    if (status == OfferNegotiationActionStatus.accepted) {
+      final completed =
+          ref.read(dealEngineProvider).acceptOffer(resolution.state, offerId);
+      if (completed == null) {
+        return const OfferNegotiationActionResult(
+          status: OfferNegotiationActionStatus.invalid,
+        );
+      }
+      state = completed;
+    } else {
+      state = resolution.state;
+    }
+    _scheduleAutoSave();
+    return OfferNegotiationActionResult(
+      status: status,
+      acceptanceChance: resolution.acceptanceChance,
+    );
+  }
+
   ScoutActionResult hireScout(String scoutId) {
     final currentGame = state;
     if (currentGame == null) return ScoutActionResult.noActiveGame;
@@ -298,9 +451,15 @@ class GameController extends Notifier<GameState?> {
     if (currentGame.agent.reputation < candidate.requiredReputation) {
       return ScoutActionResult.reputationTooLow;
     }
+    if (!candidate.trustsAgencyEnough) {
+      return ScoutActionResult.trustTooLow;
+    }
 
     final updatedScouts = [...currentGame.scouts];
-    updatedScouts[index] = candidate.copyWith(agencyId: currentGame.agent.id);
+    updatedScouts[index] = candidate.copyWith(
+      agencyId: currentGame.agent.id,
+      weeksWithAgency: 1,
+    );
     state = currentGame.copyWith(
       agent: currentGame.agent.copyWith(
         money: currentGame.agent.money - candidate.signingCost,
@@ -347,6 +506,7 @@ class GameController extends Notifier<GameState?> {
     final updatedScouts = [...currentGame.scouts];
     updatedScouts[index] = scout.copyWith(
       agencyId: Scout.candidatePoolAgencyId,
+      weeksWithAgency: 0,
     );
     state = currentGame.copyWith(
       scouts: updatedScouts,
@@ -493,7 +653,10 @@ class GameController extends Notifier<GameState?> {
       marketValue: player.value,
     );
     final players = [...currentGame.players];
-    players[index] = player.copyWith(clearAgentId: true);
+    players[index] = player.copyWith(
+      clearAgentId: true,
+      agencyRelationshipWeeks: 0,
+    );
     state = currentGame.copyWith(
       agent: currentGame.agent.copyWith(
         money: currentGame.agent.money - cost,
@@ -645,7 +808,22 @@ class GameController extends Notifier<GameState?> {
     try {
       final loaded = await ref.read(gameSaveRepositoryProvider).loadLatest();
       if (loaded == null) return LoadGameResult.noSave;
-      state = loaded;
+      final relationshipsNeedMigration = loaded.representedPlayers.any(
+            (player) => player.agencyRelationshipWeeks == 0,
+          ) ||
+          loaded.hiredScouts.any((scout) => scout.weeksWithAgency == 0);
+      final cleaned = const AgencyTrustEngine().initializeExistingRelationships(
+        const AgencyTransactionRetention().clean(
+          const TalentPoolPolicy().clean(loaded),
+        ),
+      );
+      state = cleaned;
+      if (cleaned.agencyTransactions.length !=
+              loaded.agencyTransactions.length ||
+          cleaned.players.length != loaded.players.length ||
+          relationshipsNeedMigration) {
+        _scheduleAutoSave();
+      }
       return LoadGameResult.success;
     } on FormatException {
       return LoadGameResult.invalidSave;

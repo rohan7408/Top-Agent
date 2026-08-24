@@ -5,8 +5,27 @@ import '../../../app/theme/app_colors.dart';
 import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
 import '../../../core/widgets/compact_data_table.dart';
-import '../../../domain/models/contract.dart';
+import '../../../core/widgets/compact_page_chrome.dart';
+import '../../../core/widgets/section_placeholder.dart';
 import '../../../domain/models/agency_transaction.dart';
+import '../../../domain/models/contract.dart';
+
+class FinancePage extends StatelessWidget {
+  const FinancePage({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(
+          toolbarHeight: 50,
+          title: const CompactPageTitle(
+            title: 'Finance',
+            eyebrow: 'Agency accounts',
+            accent: AppColors.amber,
+          ),
+        ),
+        body: const FinanceScreen(),
+      );
+}
 
 class FinanceScreen extends ConsumerWidget {
   const FinanceScreen({super.key});
@@ -18,15 +37,7 @@ class FinanceScreen extends ConsumerWidget {
 
     final clients = game.representedPlayers;
     final clientIds = clients.map((player) => player.id).toSet();
-    final feeContracts = game.contracts
-        .where((contract) =>
-            contract.agentFee > 0 && clientIds.contains(contract.playerId))
-        .toList()
-      ..sort((a, b) => b.startSeason.compareTo(a.startSeason));
-    final totalFees = feeContracts.fold<double>(
-      0,
-      (total, contract) => total + contract.agentFee,
-    );
+    final totalFees = game.agent.totalAgentFeesEarned;
     final portfolioValue = clients.fold<double>(
       0,
       (total, player) => total + player.value,
@@ -50,9 +61,13 @@ class FinanceScreen extends ConsumerWidget {
         commissionContracts[contract.playerId] = contract;
       }
     }
-    final weeklyCommission = commissionContracts.values.fold<double>(
+    final clientsById = {for (final player in clients) player.id: player};
+    final weeklyCommission = commissionContracts.entries.fold<double>(
       0,
-      (total, contract) => total + contract.weeklySalaryCommission,
+      (total, entry) =>
+          total +
+          ((clientsById[entry.key]?.salary ?? entry.value.salary) *
+              entry.value.salaryCommissionRate),
     );
     final transactions = game.agencyTransactions.reversed.toList();
 
@@ -67,7 +82,7 @@ class FinanceScreen extends ConsumerWidget {
         _AgencyMetricStrip(
           items: [
             ('CASH', GameFormatters.compactCurrency(game.agent.money)),
-            ('FEES', GameFormatters.compactCurrency(totalFees)),
+            ('AGENT FEES', GameFormatters.compactCurrency(totalFees)),
             ('CLIENTS', '${clients.length}'),
             ('REP', '${game.agent.reputation}'),
           ],
@@ -87,6 +102,14 @@ class FinanceScreen extends ConsumerWidget {
           label: 'Salary commission income',
           value: '+${GameFormatters.compactCurrency(weeklyCommission)}/wk',
           valueColor: weeklyCommission > 0 ? AppColors.teal : AppColors.muted,
+          height: 31,
+        ),
+        CompactInfoRow(
+          label: 'Career salary commission',
+          value: GameFormatters.compactCurrency(
+            game.agent.totalSalaryCommissionEarned,
+          ),
+          valueColor: AppColors.teal,
           height: 31,
         ),
         CompactInfoRow(
@@ -151,7 +174,7 @@ class _AgencyMetricStrip extends StatelessWidget {
                         items[index].$1,
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                               color: AppColors.muted,
-                              fontSize: 7,
+                              fontSize: 8,
                               letterSpacing: 0.5,
                             ),
                       ),
@@ -273,16 +296,9 @@ class _NoTransactionsYet extends StatelessWidget {
   const _NoTransactionsYet();
 
   @override
-  Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            'Agency income and expenses will be recorded here.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppColors.muted,
-                ),
-          ),
-        ),
+  Widget build(BuildContext context) => const SectionPlaceholder(
+        icon: Icons.receipt_long_outlined,
+        title: 'No transactions yet',
+        message: 'Agency income and expenses will be recorded here.',
       );
 }

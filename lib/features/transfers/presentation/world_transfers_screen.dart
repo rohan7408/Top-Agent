@@ -7,23 +7,34 @@ import '../../../app/theme/app_colors.dart';
 import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
 import '../../../core/widgets/compact_data_table.dart';
+import '../../../core/widgets/compact_page_chrome.dart';
+import '../../../core/widgets/section_placeholder.dart';
 import '../../../domain/models/game_state.dart';
 import '../../../domain/models/transfer_record.dart';
 
 class WorldTransfersScreen extends ConsumerWidget {
   const WorldTransfersScreen({super.key});
 
+  static const visibleTransferLimit = 20;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final game = ref.watch(gameControllerProvider);
     if (game == null) return const SizedBox.shrink();
-    final recent = [...game.transfers]..sort(_byMostRecent);
-    final records = [...game.transfers]..sort(_byHighestFee);
+    final allRecent = [...game.transfers]..sort(_byMostRecent);
+    final allRecords = [...game.transfers]..sort(_byHighestFee);
+    final recent = allRecent.take(visibleTransferLimit).toList(growable: false);
+    final records =
+        allRecords.take(visibleTransferLimit).toList(growable: false);
 
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 50,
-        title: const Text('World transfers'),
+        title: const CompactPageTitle(
+          title: 'World transfers',
+          eyebrow: 'Market activity',
+          accent: AppColors.amber,
+        ),
       ),
       body: Column(
         children: [
@@ -31,7 +42,7 @@ class WorldTransfersScreen extends ConsumerWidget {
             child: _TransferHalf(
               key: const Key('recentTransfersHalf'),
               title: 'Recent transfers',
-              trailing: '${recent.length} COMPLETED',
+              trailing: '${recent.length} SHOWN',
               transfers: recent,
               game: game,
               listKey: const Key('recentTransferList'),
@@ -104,7 +115,7 @@ class _TransferHalf extends StatelessWidget {
             identityLabel: 'PLAYER / MOVE',
             trailing: [
               CompactColumnLabel('WHEN', width: 58),
-              CompactColumnLabel('FEE', width: 74),
+              CompactColumnLabel('DEAL', width: 88),
             ],
           ),
           Expanded(
@@ -151,7 +162,9 @@ class _TransferRow extends StatelessWidget {
     final player = game.players
         .where((candidate) => candidate.id == transfer.playerId)
         .firstOrNull;
-    final from = game.clubById(transfer.fromClubId)?.name ?? 'Unknown club';
+    final from = transfer.type == TransferMoveType.freeAgent
+        ? 'Free agent'
+        : game.clubById(transfer.fromClubId)?.name ?? 'Unknown club';
     final to = game.clubById(transfer.toClubId)?.name ?? 'Unknown club';
     return Material(
       color: isAlternate ? AppColors.panelAlt : AppColors.navy,
@@ -187,7 +200,11 @@ class _TransferRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      player?.name ?? 'Unknown player',
+                      '${player?.name ?? 'Unknown player'}${switch (transfer.type) {
+                        TransferMoveType.loan => ' · LOAN',
+                        TransferMoveType.freeAgent => ' · FREE AGENT',
+                        TransferMoveType.permanent => '',
+                      }}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -221,18 +238,53 @@ class _TransferRow extends StatelessWidget {
                 ),
               ),
               Container(
-                width: 74,
+                width: 88,
                 height: double.infinity,
                 alignment: Alignment.centerRight,
                 padding: const EdgeInsets.only(right: 8),
                 color: accent.withValues(alpha: 0.08),
-                child: Text(
-                  GameFormatters.compactCurrency(transfer.fee),
-                  maxLines: 1,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: accent,
-                        fontWeight: FontWeight.w900,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      GameFormatters.compactCurrency(transfer.fee),
+                      key: Key('transferFee-${transfer.id}'),
+                      maxLines: 1,
+                      overflow: TextOverflow.clip,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: accent,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                          ),
+                    ),
+                    if (transfer.agentFee > 0)
+                      Text(
+                        'AGENT ${GameFormatters.compactCurrency(transfer.agentFee)}',
+                        maxLines: 1,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.teal,
+                              fontSize: 7,
+                              fontWeight: FontWeight.w800,
+                            ),
+                      )
+                    else
+                      Text(
+                        switch (transfer.type) {
+                          TransferMoveType.loan => 'LOAN FEE',
+                          TransferMoveType.freeAgent => 'FREE AGENT',
+                          TransferMoveType.permanent => 'TRANSFER',
+                        },
+                        key: Key('transferType-${transfer.id}'),
+                        maxLines: 1,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: AppColors.muted,
+                              fontSize: 7,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.4,
+                            ),
                       ),
+                  ],
                 ),
               ),
             ],
@@ -249,20 +301,10 @@ class _EmptyTransfers extends StatelessWidget {
   final Color accent;
 
   @override
-  Widget build(BuildContext context) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.swap_horiz_rounded, color: accent, size: 25),
-            const SizedBox(height: 5),
-            Text(
-              'No completed transfers yet',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: AppColors.muted),
-            ),
-          ],
-        ),
+  Widget build(BuildContext context) => SectionPlaceholder(
+        icon: Icons.swap_horiz_rounded,
+        title: 'No completed transfers yet',
+        message: 'Completed moves will appear here as the market develops.',
+        accent: accent,
       );
 }

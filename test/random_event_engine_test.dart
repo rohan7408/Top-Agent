@@ -8,8 +8,12 @@ import 'package:football_agent/simulation/engines/random_event_engine.dart';
 void main() {
   const engine = RandomEventEngine();
 
-  test('all 12 event templates are eligible and produce three choices', () {
-    final game = _preparedGame();
+  test('all prepared event templates are eligible and produce three choices',
+      () {
+    final prepared = _preparedGame();
+    final game = prepared.copyWith(
+      agent: prepared.agent.copyWith(reputation: 50, money: 10000),
+    );
 
     expect(engine.eligibleTypes(game).toSet(), AgencyEventType.values.toSet());
     for (final type in AgencyEventType.values) {
@@ -26,6 +30,141 @@ void main() {
       expect(result.state.pendingAgencyEvents.single.type, type);
       expect(result.state.pendingAgencyEvents.single.choices, hasLength(3));
     }
+  });
+
+  test('commercial and media events only use represented clients', () {
+    final game = _preparedGame();
+    const playerEvents = {
+      AgencyEventType.televisionInterview,
+      AgencyEventType.charityAppearance,
+      AgencyEventType.socialMediaControversy,
+      AgencyEventType.conflictingSponsors,
+      AgencyEventType.documentaryOffer,
+      AgencyEventType.imageRightsDispute,
+    };
+
+    for (final type in playerEvents) {
+      final result = engine.processWeek(
+        game,
+        season: 1,
+        week: 8,
+        seed: 800 + type.index,
+        forceType: type,
+      );
+      final event = result.state.pendingAgencyEvents.single;
+      expect(event.playerId, game.representedPlayers.single.id);
+      expect(event.playerId, isNotNull);
+    }
+  });
+
+  test('agency sponsorship and finance events do not name unrelated players',
+      () {
+    final prepared = _preparedGame();
+    final game = prepared.copyWith(
+      agent: prepared.agent.copyWith(reputation: 50, money: -1000),
+    );
+    const agencyEvents = {
+      AgencyEventType.agencySponsorship,
+      AgencyEventType.unexpectedTaxBill,
+      AgencyEventType.legalComplaint,
+      AgencyEventType.officeLeaseRenewal,
+      AgencyEventType.dataBreach,
+      AgencyEventType.insuranceRenewal,
+      AgencyEventType.investorApproach,
+      AgencyEventType.reputationConsultant,
+      AgencyEventType.cashFlowCrisis,
+    };
+
+    for (final type in agencyEvents) {
+      final result = engine.processWeek(
+        game,
+        season: 1,
+        week: 8,
+        seed: 900 + type.index,
+        forceType: type,
+      );
+      final event = result.state.pendingAgencyEvents.single;
+      expect(event.playerId, isNull, reason: type.name);
+      expect(event.clubId, isNull, reason: type.name);
+    }
+  });
+
+  test('media crisis choices update connected trust and agency finance', () {
+    final game = _preparedGame();
+    final client = game.representedPlayers.single;
+    final generated = engine.processWeek(
+      game,
+      season: 1,
+      week: 8,
+      seed: 1001,
+      forceType: AgencyEventType.socialMediaControversy,
+    );
+    final event = generated.state.pendingAgencyEvents.single;
+    final resolution = engine.resolve(
+      generated.state,
+      eventId: event.id,
+      choiceId: 'crisis_team',
+    )!;
+    final updated =
+        resolution.state.players.firstWhere((player) => player.id == client.id);
+
+    expect(updated.agentTrust, client.agentTrust + 2);
+    expect(resolution.state.agent.money, game.agent.money - 8000);
+    expect(
+      resolution.state.agencyTransactions.last.type,
+      AgencyTransactionType.agencyEvent,
+    );
+  });
+
+  test('cash-flow event can restore a negative agency balance', () {
+    final prepared = _preparedGame();
+    final game = prepared.copyWith(
+      agent: prepared.agent.copyWith(money: -12000),
+    );
+    final generated = engine.processWeek(
+      game,
+      season: 1,
+      week: 8,
+      seed: 1002,
+      forceType: AgencyEventType.cashFlowCrisis,
+    );
+    final event = generated.state.pendingAgencyEvents.single;
+    final resolution = engine.resolve(
+      generated.state,
+      eventId: event.id,
+      choiceId: 'loan',
+    )!;
+
+    expect(resolution.state.agent.money, greaterThan(0));
+    expect(resolution.state.agent.reputation, game.agent.reputation - 3);
+    expect(resolution.state.agencyTransactions.last.amount, greaterThan(0));
+  });
+
+  test('investor and cash-flow templates obey their agency conditions', () {
+    final prepared = _preparedGame();
+    final stable = prepared.copyWith(
+      agent: prepared.agent.copyWith(reputation: 10, money: 100000),
+    );
+    final pressured = prepared.copyWith(
+      agent: prepared.agent.copyWith(reputation: 30, money: -1000),
+    );
+
+    expect(
+      engine.eligibleTypes(stable),
+      isNot(contains(AgencyEventType.investorApproach)),
+    );
+    expect(
+      engine.eligibleTypes(stable),
+      isNot(contains(AgencyEventType.cashFlowCrisis)),
+    );
+    expect(
+      engine.eligibleTypes(pressured),
+      contains(AgencyEventType.investorApproach),
+    );
+    expect(
+      engine.eligibleTypes(pressured),
+      contains(AgencyEventType.cashFlowCrisis),
+    );
   });
 
   test('a decision is applied exactly once and allows negative reputation', () {

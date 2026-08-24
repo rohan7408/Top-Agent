@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/theme/app_colors.dart';
+import '../../../app/theme/app_tokens.dart';
 import '../../../app/router/app_router.dart';
 import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
@@ -12,6 +13,7 @@ import '../../../domain/models/club_offer.dart';
 import '../../../domain/models/game_email.dart';
 import '../../../domain/models/game_state.dart';
 import '../../../domain/models/agency_event.dart';
+import '../../offers/presentation/offer_negotiation_sheet.dart';
 
 class EmailScreen extends ConsumerWidget {
   const EmailScreen({super.key});
@@ -28,13 +30,8 @@ class EmailScreen extends ConsumerWidget {
         .toList(growable: false);
     final unreadCount = emails.where((email) => !email.isRead).length;
     final pendingEvents = game.pendingAgencyEvents;
-    final eventHistory = game.agencyEvents
-        .where((event) => event.status != AgencyEventStatus.pending)
-        .toList(growable: false)
-        .reversed
-        .toList(growable: false);
 
-    if (offers.isEmpty && emails.isEmpty && game.agencyEvents.isEmpty) {
+    if (offers.isEmpty && emails.isEmpty && pendingEvents.isEmpty) {
       return const SectionPlaceholder(
         icon: Icons.mark_email_unread_outlined,
         title: 'Inbox clear',
@@ -47,7 +44,7 @@ class EmailScreen extends ConsumerWidget {
         _InboxSummary(
           unreadCount: unreadCount,
           actionCount: offers.length + pendingEvents.length,
-          totalCount: emails.length + game.agencyEvents.length,
+          totalCount: emails.length + offers.length + pendingEvents.length,
         ),
         Expanded(
           child: ListView(
@@ -98,21 +95,6 @@ class EmailScreen extends ConsumerWidget {
                       _showEmail(
                           context, email, game.seasonLabel(email.season));
                     },
-                  ),
-              ],
-              if (eventHistory.isNotEmpty) ...[
-                CompactSectionBar(
-                  title: 'Decision history',
-                  trailing: '${eventHistory.length} EVENTS',
-                ),
-                for (var index = 0; index < eventHistory.length; index++)
-                  _AgencyEventRow(
-                    event: eventHistory[index],
-                    game: game,
-                    isAlternate: index.isOdd,
-                    onTap: () => context.push(
-                      AppRoutes.eventDetails(eventHistory[index].id),
-                    ),
                   ),
               ],
             ],
@@ -189,19 +171,17 @@ class _AgencyEventRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final pending = event.status == AgencyEventStatus.pending;
     final accent = _eventOutcomeColor(event.outcome);
-    return InkWell(
+    return CompactRowSurface(
       key: Key('agencyEventRow-${event.id}'),
+      railColor: accent,
+      isAlternate: isAlternate,
+      height: pending ? 58 : 53,
       onTap: onTap,
-      child: Container(
-        height: pending ? 58 : 53,
-        decoration: BoxDecoration(
-          color: isAlternate ? AppColors.panelAlt : AppColors.navy,
-          border: Border(
-            left: BorderSide(color: accent, width: 3),
-            bottom: const BorderSide(color: AppColors.slate),
-          ),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+      semanticLabel: pending
+          ? '${event.title}, decision required'
+          : '${event.title}, ${event.outcomeSummary ?? 'event closed'}',
+      child: Padding(
+        padding: const EdgeInsets.only(right: AppSpacing.sm),
         child: Row(
           children: [
             Icon(_eventOutcomeIcon(event.outcome), color: accent, size: 18),
@@ -313,7 +293,7 @@ class _InboxCount extends StatelessWidget {
               text: label,
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: AppColors.muted,
-                    fontSize: 7,
+                    fontSize: 8,
                   ),
             ),
           ],
@@ -336,16 +316,11 @@ class _OfferRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Container(
+    return CompactRowSurface(
       height: 62,
-      decoration: BoxDecoration(
-        color: isAlternate ? AppColors.panelAlt : AppColors.navy,
-        border: const Border(
-          left: BorderSide(color: AppColors.amber, width: 3),
-          bottom: BorderSide(color: AppColors.slate),
-        ),
-      ),
-      padding: const EdgeInsets.only(left: 8, right: 4),
+      railColor: AppColors.amber,
+      isAlternate: isAlternate,
+      semanticLabel: 'Offer from $clubName for $playerName',
       child: Row(
         children: [
           const Icon(Icons.description_outlined,
@@ -360,6 +335,7 @@ class _OfferRow extends ConsumerWidget {
                   '$clubName → $playerName',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.left,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w800,
                       ),
@@ -368,6 +344,7 @@ class _OfferRow extends ConsumerWidget {
                   '${GameFormatters.compactCurrency(offer.weeklySalary)}/wk · ${offer.contractLength}y · Fee ${GameFormatters.compactCurrency(offer.agentFee)} · ${(offer.salaryCommissionRate * 100).round()}% cut',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.left,
                   style: Theme.of(context)
                       .textTheme
                       .bodySmall
@@ -376,34 +353,15 @@ class _OfferRow extends ConsumerWidget {
               ],
             ),
           ),
-          IconButton(
-            constraints: const BoxConstraints.tightFor(width: 34, height: 34),
-            padding: EdgeInsets.zero,
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Decline',
-            onPressed: () => ref
-                .read(gameControllerProvider.notifier)
-                .declineOffer(offer.id),
-            icon: const Icon(Icons.close_rounded,
-                color: AppColors.danger, size: 19),
-          ),
-          IconButton.filled(
-            key: Key('inboxAcceptOfferButton-${offer.id}'),
-            constraints: const BoxConstraints.tightFor(width: 34, height: 34),
-            padding: EdgeInsets.zero,
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Suggest deal',
-            onPressed: () {
-              final result = ref
-                  .read(gameControllerProvider.notifier)
-                  .acceptOffer(offer.id);
-              if (result == DealActionResult.success) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('$playerName signed for $clubName.')),
-                );
-              }
-            },
-            icon: const Icon(Icons.check_rounded, size: 19),
+          CompactActionCell(
+            key: Key('inboxReviewOfferButton-${offer.id}'),
+            label: 'Review',
+            icon: Icons.tune_rounded,
+            color: AppColors.amber,
+            onPressed: () => showOfferNegotiationSheet(
+              context,
+              offerId: offer.id,
+            ),
           ),
         ],
       ),
@@ -431,21 +389,14 @@ class _EmailRow extends StatelessWidget {
       GameEmailType.finance => Icons.account_balance_wallet_outlined,
       GameEmailType.world => Icons.public_rounded,
     };
-    return InkWell(
+    return CompactRowSurface(
+      railColor: email.isRead ? Colors.transparent : AppColors.teal,
+      isAlternate: isAlternate,
+      height: 53,
       onTap: onTap,
-      child: Container(
-        height: 53,
-        decoration: BoxDecoration(
-          color: isAlternate ? AppColors.panelAlt : AppColors.navy,
-          border: Border(
-            left: BorderSide(
-              color: email.isRead ? Colors.transparent : AppColors.teal,
-              width: 3,
-            ),
-            bottom: const BorderSide(color: AppColors.slate),
-          ),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+      semanticLabel: '${email.subject}, $seasonLabel week ${email.week}',
+      child: Padding(
+        padding: const EdgeInsets.only(right: AppSpacing.sm),
         child: Row(
           children: [
             Icon(icon,
@@ -461,6 +412,7 @@ class _EmailRow extends StatelessWidget {
                     email.subject,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.left,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           fontWeight:
                               email.isRead ? FontWeight.w500 : FontWeight.w800,
@@ -470,6 +422,7 @@ class _EmailRow extends StatelessWidget {
                     '$seasonLabel W${email.week} · ${email.body}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.left,
                     style: Theme.of(context)
                         .textTheme
                         .bodySmall

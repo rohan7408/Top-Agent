@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../../app/router/app_router.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../application/game_controller.dart';
+import '../../../core/widgets/compact_page_chrome.dart';
+import '../../../core/widgets/section_placeholder.dart';
 import '../../../domain/models/game_state.dart';
 import '../../../domain/models/player.dart';
 import '../../../domain/models/player_match_performance.dart';
@@ -21,7 +23,13 @@ class MatchReportScreen extends ConsumerWidget {
     final game = ref.watch(gameControllerProvider);
     final report = game == null ? null : _reportService.build(game, matchId);
     if (game == null || report == null) {
-      return const Scaffold(body: Center(child: Text('Match not found.')));
+      return const Scaffold(
+        body: SectionPlaceholder(
+          icon: Icons.sports_soccer_outlined,
+          title: 'Match not found',
+          message: 'This match report is unavailable in the current career.',
+        ),
+      );
     }
 
     final homeName = game.clubById(report.home.clubId)?.name ?? 'Home';
@@ -38,9 +46,11 @@ class MatchReportScreen extends ConsumerWidget {
         appBar: AppBar(
           toolbarHeight: 46,
           titleSpacing: 0,
-          title: Text(
-            '${game.seasonLabel(report.result.season)} · Week ${report.result.week}',
-            style: Theme.of(context).textTheme.titleMedium,
+          title: CompactPageTitle(
+            title: 'Match report',
+            eyebrow:
+                '${game.seasonLabel(report.result.season)} · Week ${report.result.week}',
+            accent: AppColors.ratingBlue,
           ),
         ),
         body: Column(
@@ -58,22 +68,15 @@ class MatchReportScreen extends ConsumerWidget {
                 rating: report.playerOfTheMatch!.rating,
               ),
             Container(
-              height: 36,
+              height: 44,
               decoration: const BoxDecoration(
                 border: Border.symmetric(
                   horizontal: BorderSide(color: AppColors.slate),
                 ),
               ),
-              child: TabBar(
-                labelPadding: EdgeInsets.zero,
-                labelStyle: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w800,
-                ),
-                tabs: [
-                  const Tab(text: 'Home ratings'),
-                  const Tab(text: 'Away ratings'),
-                ],
+              child: const CompactTabBar(
+                labels: ['Home ratings', 'Away ratings'],
+                height: 44,
               ),
             ),
             Expanded(
@@ -245,7 +248,7 @@ class _PlayerOfTheMatchRow extends StatelessWidget {
           onTap: () => context.push(AppRoutes.playerDetails(player.id)),
           child: Container(
             key: const Key('playerOfTheMatchRow'),
-            height: 38,
+            height: 44,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: const BoxDecoration(
               border: Border.symmetric(
@@ -260,7 +263,7 @@ class _PlayerOfTheMatchRow extends StatelessWidget {
                 Text('POTM',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: AppColors.amber,
-                          fontSize: 7,
+                          fontSize: 8,
                         )),
                 const SizedBox(width: 8),
                 Expanded(
@@ -327,7 +330,7 @@ class _PerformanceRow extends StatelessWidget {
       child: InkWell(
         onTap: () => context.push(AppRoutes.playerDetails(player.id)),
         child: SizedBox(
-          height: 43,
+          height: 44,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             child: Row(
@@ -338,7 +341,7 @@ class _PerformanceRow extends StatelessWidget {
                     player.position.shortLabel,
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: AppColors.teal,
-                          fontSize: 7,
+                          fontSize: 8,
                         ),
                   ),
                 ),

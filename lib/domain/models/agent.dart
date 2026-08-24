@@ -8,6 +8,8 @@ class Agent {
     required this.reputation,
     required this.currentWeek,
     required this.currentSeason,
+    this.totalAgentFeesEarned = 0,
+    this.totalSalaryCommissionEarned = 0,
   });
 
   final String id;
@@ -18,6 +20,8 @@ class Agent {
   final int reputation;
   final int currentWeek;
   final int currentSeason;
+  final double totalAgentFeesEarned;
+  final double totalSalaryCommissionEarned;
 
   Agent copyWith({
     String? id,
@@ -28,6 +32,8 @@ class Agent {
     int? reputation,
     int? currentWeek,
     int? currentSeason,
+    double? totalAgentFeesEarned,
+    double? totalSalaryCommissionEarned,
   }) {
     return Agent(
       id: id ?? this.id,
@@ -38,6 +44,9 @@ class Agent {
       reputation: reputation ?? this.reputation,
       currentWeek: currentWeek ?? this.currentWeek,
       currentSeason: currentSeason ?? this.currentSeason,
+      totalAgentFeesEarned: totalAgentFeesEarned ?? this.totalAgentFeesEarned,
+      totalSalaryCommissionEarned:
+          totalSalaryCommissionEarned ?? this.totalSalaryCommissionEarned,
     );
   }
 
@@ -50,6 +59,8 @@ class Agent {
         'reputation': reputation,
         'currentWeek': currentWeek,
         'currentSeason': currentSeason,
+        'totalAgentFeesEarned': totalAgentFeesEarned,
+        'totalSalaryCommissionEarned': totalSalaryCommissionEarned,
       };
 
   factory Agent.fromJson(Map<String, Object?> json) {
@@ -62,6 +73,10 @@ class Agent {
       reputation: json['reputation']! as int,
       currentWeek: json['currentWeek']! as int,
       currentSeason: json['currentSeason']! as int,
+      totalAgentFeesEarned:
+          ((json['totalAgentFeesEarned'] as num?) ?? 0).toDouble(),
+      totalSalaryCommissionEarned:
+          ((json['totalSalaryCommissionEarned'] as num?) ?? 0).toDouble(),
     );
   }
 }

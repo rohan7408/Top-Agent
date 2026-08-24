@@ -44,6 +44,7 @@ class MatchEngine {
       final homeManager = game.managerForClub(fixture.homeClubId);
       final awayManager = game.managerForClub(fixture.awayClubId);
       final homeLineup = _selectLineup(
+        game,
         game
             .playersForClub(fixture.homeClubId)
             .where((player) => !unavailableIds.contains(player.id))
@@ -51,13 +52,33 @@ class MatchEngine {
         homeManager,
       );
       final awayLineup = _selectLineup(
+        game,
         game
             .playersForClub(fixture.awayClubId)
             .where((player) => !unavailableIds.contains(player.id))
             .toList(),
         awayManager,
       );
-      if (homeLineup.length < 11 || awayLineup.length < 11) continue;
+      final homeParticipants = _createMatchParticipants(
+        game: game,
+        squad: game
+            .playersForClub(fixture.homeClubId)
+            .where((player) => !unavailableIds.contains(player.id))
+            .toList(),
+        starters: homeLineup,
+        manager: homeManager,
+        random: random,
+      );
+      final awayParticipants = _createMatchParticipants(
+        game: game,
+        squad: game
+            .playersForClub(fixture.awayClubId)
+            .where((player) => !unavailableIds.contains(player.id))
+            .toList(),
+        starters: awayLineup,
+        manager: awayManager,
+        random: random,
+      );
 
       final homeStrength = _lineupStrength(homeLineup) +
           (((homeManager?.ability ?? 60) - 60) * 0.025);
@@ -91,7 +112,9 @@ class MatchEngine {
 
       final matchPerformances = [
         ..._createTeamPerformances(
-          lineup: homeLineup,
+          lineup: homeParticipants.players,
+          starterIds: homeParticipants.starterIds,
+          minutesByPlayer: homeParticipants.minutesByPlayer,
           clubId: fixture.homeClubId,
           goalsScored: result.homeGoals,
           goalsConceded: result.awayGoals,
@@ -103,7 +126,9 @@ class MatchEngine {
           random: random,
         ),
         ..._createTeamPerformances(
-          lineup: awayLineup,
+          lineup: awayParticipants.players,
+          starterIds: awayParticipants.starterIds,
+          minutesByPlayer: awayParticipants.minutesByPlayer,
           clubId: fixture.awayClubId,
           goalsScored: result.awayGoals,
           goalsConceded: result.homeGoals,
@@ -130,7 +155,14 @@ class MatchEngine {
       performances.addAll(matchPerformances);
       injuries.addAll(
         _createMatchInjuries(
-          players: [...homeLineup, ...awayLineup],
+          players: [
+            ...homeParticipants.players,
+            ...awayParticipants.players,
+          ],
+          minutesByPlayer: {
+            ...homeParticipants.minutesByPlayer,
+            ...awayParticipants.minutesByPlayer,
+          },
           matchId: matchId,
           season: fixture.season,
           week: fixture.week,
@@ -148,6 +180,7 @@ class MatchEngine {
 
   List<PlayerInjury> _createMatchInjuries({
     required List<Player> players,
+    required Map<String, int> minutesByPlayer,
     required String matchId,
     required int season,
     required int week,
@@ -160,11 +193,12 @@ class MatchEngine {
               player.attributes.agility) /
           3;
       final injuryChance = balance.matchInjuryChance(
-        age: player.age,
-        durability: durability,
-        fatigue: player.fatigue,
-        consecutiveStarts: player.consecutiveStarts,
-      );
+            age: player.age,
+            durability: durability,
+            fatigue: player.fatigue,
+            consecutiveStarts: player.consecutiveStarts,
+          ) *
+          ((minutesByPlayer[player.id] ?? 0) / 90);
       if (random.nextDouble() >= injuryChance) {
         continue;
       }
@@ -208,7 +242,11 @@ class MatchEngine {
         TacticalStyle.balanced || null => 0,
       };
 
-  List<Player> _selectLineup(List<Player> squad, ClubManager? manager) {
+  List<Player> _selectLineup(
+    GameState game,
+    List<Player> squad,
+    ClubManager? manager,
+  ) {
     final selected = <Player>[];
     final usedIds = <String>{};
 
@@ -216,8 +254,8 @@ class MatchEngine {
       final candidates = squad
           .where((player) => player.position == position)
           .toList(growable: true)
-        ..sort((first, second) => _selectionScore(second, manager)
-            .compareTo(_selectionScore(first, manager)));
+        ..sort((first, second) => _selectionScore(game, second, manager)
+            .compareTo(_selectionScore(game, first, manager)));
       for (final player in candidates.take(count)) {
         selected.add(player);
         usedIds.add(player.id);
@@ -233,22 +271,97 @@ class MatchEngine {
       final remaining = squad
           .where((player) => !usedIds.contains(player.id))
           .toList(growable: true)
-        ..sort((first, second) => _selectionScore(second, manager)
-            .compareTo(_selectionScore(first, manager)));
+        ..sort((first, second) => _selectionScore(game, second, manager)
+            .compareTo(_selectionScore(game, first, manager)));
       selected.addAll(remaining.take(11 - selected.length));
     }
     return List.unmodifiable(selected.take(11));
   }
 
-  double _selectionScore(Player player, ClubManager? manager) {
+  _MatchParticipants _createMatchParticipants({
+    required GameState game,
+    required List<Player> squad,
+    required List<Player> starters,
+    required ClubManager? manager,
+    required Random random,
+  }) {
+    final starterIds = starters.map((player) => player.id).toSet();
+    final rotation = manager?.rotation ?? 60;
+    final substitutionCount = rotation >= 80
+        ? 5
+        : rotation >= 55
+            ? 4
+            : 3;
+    final substitutes = squad
+        .where((player) => !starterIds.contains(player.id))
+        .toList(growable: true)
+      ..sort((first, second) => _selectionScore(game, second, manager)
+          .compareTo(_selectionScore(game, first, manager)));
+    final usedSubstitutes = substitutes.take(substitutionCount).toList();
+    final minutesByPlayer = {
+      for (final starter in starters) starter.id: 90,
+    };
+    final replacedIds = <String>{};
+    for (final substitute in usedSubstitutes) {
+      var replacementCandidates = starters
+          .where(
+            (starter) =>
+                starter.position == substitute.position &&
+                !replacedIds.contains(starter.id),
+          )
+          .toList(growable: true);
+      if (replacementCandidates.isEmpty) {
+        replacementCandidates = starters
+            .where((starter) => !replacedIds.contains(starter.id))
+            .toList(growable: true);
+      }
+      if (replacementCandidates.isEmpty) break;
+      replacementCandidates.sort((first, second) {
+        final firstLoad = first.fatigue + (first.consecutiveStarts * 7);
+        final secondLoad = second.fatigue + (second.consecutiveStarts * 7);
+        return secondLoad.compareTo(firstLoad);
+      });
+      final replaced = replacementCandidates.first;
+      final minutes = 15 + random.nextInt(16) + (rotation >= 75 ? 5 : 0);
+      minutesByPlayer[replaced.id] = 90 - minutes;
+      minutesByPlayer[substitute.id] = minutes;
+      replacedIds.add(replaced.id);
+    }
+    final playingSubstitutes = usedSubstitutes
+        .where((player) => minutesByPlayer.containsKey(player.id))
+        .toList(growable: false);
+    return _MatchParticipants(
+      players: List.unmodifiable([...starters, ...playingSubstitutes]),
+      starterIds: Set.unmodifiable(starterIds),
+      minutesByPlayer: Map.unmodifiable(minutesByPlayer),
+    );
+  }
+
+  double _selectionScore(
+    GameState game,
+    Player player,
+    ClubManager? manager,
+  ) {
     final rotation = manager?.rotation ?? 60;
     final fatiguePenalty = player.fatigue * (0.12 + rotation / 180);
     final repetitionPenalty = player.consecutiveStarts * (rotation / 35);
-    return _roleRating(player) - fatiguePenalty - repetitionPenalty;
+    final appearances = game
+        .statsForPlayer(player.id)
+        .where((stats) => stats.season == game.currentSeason)
+        .fold<int>(0, (total, stats) => total + stats.appearances);
+    final expectedAppearances = max(0, (game.currentWeek - 1) * 0.42);
+    final opportunityGap = max(0, expectedAppearances - appearances);
+    final opportunityBonus = min(8.0, opportunityGap * rotation / 240);
+    return _roleRating(player) -
+        fatiguePenalty -
+        repetitionPenalty +
+        opportunityBonus;
   }
 
   List<PlayerMatchPerformance> _createTeamPerformances({
     required List<Player> lineup,
+    required Set<String> starterIds,
+    required Map<String, int> minutesByPlayer,
     required String clubId,
     required int goalsScored,
     required int goalsConceded,
@@ -259,6 +372,7 @@ class MatchEngine {
     required int season,
     required Random random,
   }) {
+    if (lineup.isEmpty) return <PlayerMatchPerformance>[];
     final goals = {for (final player in lineup) player.id: 0};
     final assists = {for (final player in lineup) player.id: 0};
 
@@ -266,7 +380,10 @@ class MatchEngine {
       final scorer = _weightedPlayer(
         lineup,
         random,
-        (player) => _scoringSkill(player) * _scoringWeight(player.position),
+        (player) =>
+            _scoringSkill(player) *
+            _scoringWeight(player.position) *
+            ((minutesByPlayer[player.id] ?? 0) / 90),
       );
       goals[scorer.id] = goals[scorer.id]! + 1;
       if (random.nextDouble() < 0.72 && lineup.length > 1) {
@@ -275,7 +392,10 @@ class MatchEngine {
         final assister = _weightedPlayer(
           assistingCandidates,
           random,
-          (player) => _creativeSkill(player) * _assistWeight(player.position),
+          (player) =>
+              _creativeSkill(player) *
+              _assistWeight(player.position) *
+              ((minutesByPlayer[player.id] ?? 0) / 90),
         );
         assists[assister.id] = assists[assister.id]! + 1;
       }
@@ -284,12 +404,14 @@ class MatchEngine {
     final didWin = goalsScored > opponentGoals;
     final didDraw = goalsScored == opponentGoals;
     return lineup.map((player) {
+      final minutes = minutesByPlayer[player.id] ?? 0;
       final redCard = random.nextDouble() < 0.008 ? 1 : 0;
       final yellowCard =
           redCard == 0 && random.nextDouble() < _yellowCardChance(player)
               ? 1
               : 0;
       final cleanSheet = goalsConceded == 0 &&
+          minutes >= 60 &&
           (player.position == PlayerPosition.goalkeeper ||
               player.position == PlayerPosition.defender);
       final resultBonus = didWin
@@ -321,8 +443,8 @@ class MatchEngine {
         clubId: clubId,
         week: week,
         season: season,
-        started: true,
-        minutes: 90,
+        started: starterIds.contains(player.id),
+        minutes: minutes,
         goals: goals[player.id]!,
         assists: assists[player.id]!,
         cleanSheet: cleanSheet,
@@ -350,8 +472,16 @@ class MatchEngine {
     return players.last;
   }
 
-  double _lineupStrength(List<Player> lineup) =>
-      lineup.map(_roleRating).reduce((a, b) => a + b) / lineup.length;
+  double _lineupStrength(List<Player> lineup) {
+    // The world does not model reserve and academy squads individually. A club
+    // short of 11 available senior players still fulfils the fixture with
+    // replacement-level reserves, represented here by a meaningful penalty.
+    if (lineup.isEmpty) return 25;
+    final seniorAverage =
+        lineup.map(_roleRating).reduce((a, b) => a + b) / lineup.length;
+    final emergencyPlaces = 11 - lineup.length;
+    return seniorAverage - (emergencyPlaces * 2.5);
+  }
 
   double _roleRating(Player player) {
     final attributes = player.attributes;
@@ -437,4 +567,16 @@ class MatchEngine {
     } while (product > threshold && goals < 10);
     return goals - 1;
   }
+}
+
+class _MatchParticipants {
+  const _MatchParticipants({
+    required this.players,
+    required this.starterIds,
+    required this.minutesByPlayer,
+  });
+
+  final List<Player> players;
+  final Set<String> starterIds;
+  final Map<String, int> minutesByPlayer;
 }

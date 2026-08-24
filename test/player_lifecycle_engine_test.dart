@@ -122,6 +122,9 @@ void main() {
     expect(developed.ability, greaterThan(original.ability));
     expect(developed.potential, greaterThanOrEqualTo(developed.ability));
     expect(result.playersImproved, greaterThan(0));
+    final finalizedStats = result.state.playerSeasonStats.single;
+    expect(finalizedStats.overall, original.ability);
+    expect(finalizedStats.marketValue, original.value);
   });
 
   test('a player at the retirement ceiling leaves squad and contract', () {

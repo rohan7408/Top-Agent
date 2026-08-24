@@ -4,6 +4,7 @@ import 'package:football_agent/application/game_controller.dart';
 import 'package:football_agent/application/persistence_providers.dart';
 import 'package:football_agent/domain/models/game_state.dart';
 import 'package:football_agent/domain/models/player_training_plan.dart';
+import 'package:football_agent/domain/models/transfer_record.dart';
 import 'package:football_agent/domain/services/game_factory.dart';
 import 'package:football_agent/domain/models/agency_event.dart';
 import 'package:football_agent/simulation/engines/random_event_engine.dart';
@@ -110,6 +111,7 @@ void main() {
 
     expect(signedPlayer.clubId, offer.clubId);
     expect(signedPlayer.salary, offer.weeklySalary);
+    expect(signedPlayer.value, talent.value);
     expect(signedState.contracts, hasLength(1));
     expect(
       signedState.contracts.single.salaryCommissionRate,
@@ -117,11 +119,21 @@ void main() {
     );
     expect(signedState.contractEvents, hasLength(1));
     expect(signedState.agent.money, moneyBefore + offer.agentFee);
+    expect(signedState.agent.totalAgentFeesEarned, offer.agentFee);
     expect(signedState.agent.reputation, greaterThan(reputationBefore));
     expect(clubAfter.playerIds, contains(talent.id));
     expect(clubAfter.playerIds.length, clubBefore.playerIds.length + 1);
     expect(clubAfter.totalSalary, clubBefore.totalSalary + offer.weeklySalary);
+    expect(clubAfter.balance, clubBefore.balance - offer.agentFee);
+    expect(clubAfter.budget, clubBefore.budget - offer.agentFee);
     expect(signedState.pendingOffersForPlayer(talent.id), isEmpty);
+    expect(signedState.transfers, hasLength(1));
+    expect(signedState.transfers.single.type, TransferMoveType.freeAgent);
+    expect(signedState.transfers.single.fee, 0);
+    expect(signedState.transfers.single.agentFee, offer.agentFee);
+    expect(signedState.transfers.single.totalDealCost, offer.agentFee);
+    expect(signedState.transfers.single.fromClubId, isEmpty);
+    expect(signedState.transfers.single.toClubId, offer.clubId);
 
     final beforeCommission = signedState.agent.money;
     final summary = controller.simulateNextWeek()!;
@@ -131,6 +143,124 @@ void main() {
       afterCommission.agent.money,
       beforeCommission + summary.salaryCommission,
     );
+    expect(
+      afterCommission.agent.totalSalaryCommissionEarned,
+      summary.salaryCommission,
+    );
+  });
+
+  test('countered terms can be accepted and become the signed contract', () {
+    final container = _container();
+    addTearDown(container.dispose);
+    final controller = container.read(gameControllerProvider.notifier);
+    controller.startNewGame(
+      agentName: 'Alex Morgan',
+      agencyName: 'North Star Sports',
+      agentAge: 34,
+    );
+
+    final talent =
+        container.read(gameControllerProvider)!.availableTalents.first;
+    expect(controller.recruitPlayer(talent.id), RecruitmentResult.success);
+    expect(
+      controller.suggestPlayer(talent.id).status,
+      SuggestionStatus.success,
+    );
+    final offered = container.read(gameControllerProvider)!;
+    final offer = offered.pendingOffersForPlayer(talent.id).first;
+    final salary = (offer.weeklySalary * 0.95).roundToDouble();
+    final fee = (offer.agentFee * 0.90).roundToDouble();
+    final moneyBefore = offered.agent.money;
+
+    final result = controller.negotiateOffer(
+      offerId: offer.id,
+      weeklySalary: salary,
+      agentFee: fee,
+      contractLength: offer.contractLength,
+    );
+
+    expect(result.status, OfferNegotiationActionStatus.accepted);
+    final signed = container.read(gameControllerProvider)!;
+    expect(signed.representedPlayers.single.salary, salary);
+    expect(signed.contracts.single.salary, salary);
+    expect(signed.contracts.single.agentFee, fee);
+    expect(signed.contracts.single.startWeek, signed.currentWeek);
+    expect(signed.agent.money, moneyBefore + fee);
+  });
+
+  test('a club can reject an excessive counter without completing the deal',
+      () {
+    final container = _container();
+    addTearDown(container.dispose);
+    final controller = container.read(gameControllerProvider.notifier);
+    controller.startNewGame(
+      agentName: 'Alex Morgan',
+      agencyName: 'North Star Sports',
+      agentAge: 34,
+    );
+    final talent =
+        container.read(gameControllerProvider)!.availableTalents.first;
+    controller.recruitPlayer(talent.id);
+    controller.suggestPlayer(talent.id);
+    final offered = container.read(gameControllerProvider)!;
+    final offer = offered.pendingOffersForPlayer(talent.id).first;
+
+    final result = controller.negotiateOffer(
+      offerId: offer.id,
+      weeklySalary: offer.weeklySalary * 12,
+      agentFee: offer.agentFee * 12,
+      contractLength: 5,
+    );
+
+    expect(result.status, OfferNegotiationActionStatus.rejected);
+    final after = container.read(gameControllerProvider)!;
+    expect(after.representedPlayers.single.clubId, isNull);
+    expect(after.offerById(offer.id)!.negotiationRounds, 1);
+    expect(after.offerById(offer.id)!.status.name, 'pending');
+  });
+
+  test('club listing requests enforce the window and one-year transfer rule',
+      () {
+    final container = _container();
+    addTearDown(container.dispose);
+    final controller = container.read(gameControllerProvider.notifier);
+    controller.startNewGame(
+      agentName: 'Alex Morgan',
+      agencyName: 'North Star Sports',
+      agentAge: 34,
+    );
+
+    final talent =
+        container.read(gameControllerProvider)!.availableTalents.first;
+    controller.recruitPlayer(talent.id);
+    controller.suggestPlayer(talent.id);
+    final offer = container
+        .read(gameControllerProvider)!
+        .pendingOffersForPlayer(talent.id)
+        .first;
+    controller.acceptOffer(offer.id);
+    final outsideWindow = controller.requestClubListing(
+      talent.id,
+      ClubListingActionType.transfer,
+    );
+    expect(
+      outsideWindow.status,
+      ClubListingActionStatus.transferWindowClosed,
+    );
+    for (var week = 1; week < 20; week++) {
+      controller.simulateNextWeek();
+    }
+    final tooSoon = controller.requestClubListing(
+      talent.id,
+      ClubListingActionType.transfer,
+    );
+    expect(
+      tooSoon.status,
+      ClubListingActionStatus.permanentTransferTooSoon,
+    );
+    final after = container.read(gameControllerProvider)!;
+    expect(after.representedPlayers.single.isTransferListed, isFalse);
+    expect(after.representedPlayers.single.clubId, offer.clubId);
   });
 
   test('a scout can be hired, paid weekly, and dismissed', () {
@@ -181,6 +311,44 @@ void main() {
     expect(
       dismissed.scouts
           .singleWhere((candidate) => candidate.id == scout.id)
+          .isCandidate,
+      isTrue,
+    );
+  });
+
+  test('a scout refuses to join when agency trust is below 80', () {
+    final base = const GameFactory().createNewGame(
+      agentName: 'Alex Morgan',
+      agencyName: 'North Star Sports',
+      agentAge: 34,
+      createdAt: DateTime.utc(2026, 8, 24),
+    );
+    final candidate = base.scouts.firstWhere((scout) => scout.isCandidate);
+    final prepared = base.copyWith(
+      agent: base.agent.copyWith(reputation: 200),
+      scouts: base.scouts
+          .map(
+            (scout) => scout.id == candidate.id
+                ? scout.copyWith(agencyTrust: 40)
+                : scout,
+          )
+          .toList(growable: false),
+    );
+    final container = _container(null, _FixedGameFactory(prepared));
+    addTearDown(container.dispose);
+    final controller = container.read(gameControllerProvider.notifier)
+      ..startNewGame(
+        agentName: 'Ignored',
+        agencyName: 'Ignored',
+        agentAge: 30,
+      );
+
+    expect(controller.hireScout(candidate.id), ScoutActionResult.trustTooLow);
+    expect(
+      container
+          .read(gameControllerProvider)!
+          .scouts
+          .firstWhere((scout) => scout.id == candidate.id)
           .isCandidate,
       isTrue,
     );
@@ -238,8 +406,8 @@ void main() {
     );
     final upgraded = container.read(gameControllerProvider)!;
     expect(upgraded.trainingGround.level, 2);
-    expect(upgraded.trainingGround.minimumAbility, 38);
-    expect(upgraded.trainingGround.intakeIntervalWeeks, 10);
+    expect(upgraded.trainingGround.minimumAbility, 34);
+    expect(upgraded.trainingGround.intakeIntervalWeeks, 15);
     expect(upgraded.agent.money, -49000);
     expect(upgraded.agent.reputation, 5);
     expect(upgraded.agencyTransactions.last.amount, -50000);
@@ -329,8 +497,28 @@ void main() {
     expect(afterOneWeek.currentWeek, 2);
     expect(afterOneWeek.currentSeason, 1);
     expect(afterOneWeek.matchResults, hasLength(10));
-    expect(afterOneWeek.playerPerformances, hasLength(220));
-    expect(afterOneWeek.playerSeasonStats, hasLength(220));
+    expect(afterOneWeek.playerPerformances.length, greaterThan(220));
+    expect(
+      afterOneWeek.playerPerformances.where((item) => item.started),
+      hasLength(220),
+    );
+    final activeClubPlayers = afterOneWeek.players
+        .where((player) => player.clubId != null && !player.isRetired)
+        .length;
+    expect(afterOneWeek.playerSeasonStats, hasLength(activeClubPlayers));
+    expect(
+      afterOneWeek.playerSeasonStats.where((stats) => stats.appearances == 0),
+      isNotEmpty,
+    );
+    expect(
+      afterOneWeek.playerSeasonStats.every((stats) {
+        final player = afterOneWeek.players
+            .firstWhere((player) => player.id == stats.playerId);
+        return stats.overall == player.ability &&
+            stats.marketValue == player.value;
+      }),
+      isTrue,
+    );
     expect(
       afterOneWeek.players.where((player) => player.consecutiveStarts == 1),
       hasLength(220),
@@ -364,12 +552,16 @@ void main() {
     expect(afterTwoTaps.currentWeek, 3);
     expect(afterTwoTaps.matchResults, hasLength(20));
     final weekOneClubStarters = afterOneWeek.playerPerformances
-        .where((item) => item.clubId == afterOneWeek.clubs.first.id)
+        .where(
+          (item) => item.clubId == afterOneWeek.clubs.first.id && item.started,
+        )
         .map((item) => item.playerId)
         .toSet();
     final weekTwoClubStarters = afterTwoTaps.playerPerformances
         .where((item) =>
-            item.clubId == afterTwoTaps.clubs.first.id && item.week == 2)
+            item.clubId == afterTwoTaps.clubs.first.id &&
+            item.week == 2 &&
+            item.started)
         .map((item) => item.playerId)
         .toSet();
     expect(weekOneClubStarters, hasLength(11));
@@ -385,6 +577,12 @@ void main() {
       agencyName: 'North Star Sports',
       agentAge: 34,
     );
+    final initialState = container.read(gameControllerProvider)!;
+    final weakestInitialPlayer =
+        initialState.playersForClub(initialState.clubs.first.id).reduce(
+              (first, second) =>
+                  first.ability <= second.ability ? first : second,
+            );
 
     for (var week = 0; week < 50; week++) {
       controller.simulateNextWeek();
@@ -398,7 +596,17 @@ void main() {
     expect(state.matchResults, hasLength(380));
     expect(seasonOneTable, hasLength(20));
     expect(seasonOneTable.every((record) => record.played == 38), isTrue);
-    expect(state.playerPerformances, hasLength(380 * 22));
+    expect(
+      state.playerPerformances.where((performance) => performance.started),
+      hasLength(380 * 22),
+    );
+    expect(state.playerPerformances.length, greaterThan(380 * 22));
+    expect(
+      state
+          .statsForPlayer(weakestInitialPlayer.id)
+          .fold<int>(0, (sum, stats) => sum + stats.appearances),
+      greaterThan(0),
+    );
     expect(state.injuries, isNotEmpty);
     expect(
       state.fixtures.where((fixture) => fixture.season == 2),

@@ -7,10 +7,13 @@ import '../../features/clubs/presentation/clubs_screen.dart';
 import '../../features/game_shell/presentation/game_shell_screen.dart';
 import '../../features/main_menu/presentation/main_menu_screen.dart';
 import '../../features/matches/presentation/match_report_screen.dart';
+import '../../features/leagues/presentation/league_history_screen.dart';
 import '../../features/new_game/presentation/new_game_screen.dart';
 import '../../features/office/presentation/office_management_screen.dart';
+import '../../features/staff/presentation/staff_screen.dart';
 import '../../features/players/presentation/player_detail_screen.dart';
 import '../../features/events/presentation/agency_event_screen.dart';
+import '../../features/finance/presentation/finance_screen.dart';
 import '../../features/transfers/presentation/world_transfers_screen.dart';
 
 abstract final class AppRoutes {
@@ -20,14 +23,18 @@ abstract final class AppRoutes {
   static const clubs = '/game/clubs';
   static const players = '/game/players';
   static const matches = '/game/matches';
-  static const office = '/game/office';
+  static const facilities = '/game/facilities';
+  static const staff = '/game/staff';
   static const events = '/game/events';
+  static const finance = '/game/finance';
   static const transfers = '/game/transfers';
+  static const leagues = '/game/leagues';
 
   static String clubDetails(String clubId) => '$clubs/$clubId';
   static String playerDetails(String playerId) => '$players/$playerId';
   static String matchDetails(String matchId) => '$matches/$matchId';
   static String eventDetails(String eventId) => '$events/$eventId';
+  static String leagueHistory(String leagueId) => '$leagues/$leagueId/history';
 }
 
 final appRouterProvider = Provider<GoRouter>((ref) {
@@ -58,8 +65,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ClubsScreen(),
       ),
       GoRoute(
-        path: AppRoutes.office,
-        builder: (context, state) => const OfficeManagementScreen(),
+        path: AppRoutes.facilities,
+        builder: (context, state) => const FacilitiesManagementScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.staff,
+        builder: (context, state) => const StaffManagementScreen(),
+      ),
+      GoRoute(
+        path: AppRoutes.finance,
+        builder: (context, state) => const FinancePage(),
       ),
       GoRoute(
         path: '${AppRoutes.clubs}/:clubId',
@@ -88,6 +103,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.transfers,
         builder: (context, state) => const WorldTransfersScreen(),
+      ),
+      GoRoute(
+        path: '${AppRoutes.leagues}/:leagueId/history',
+        builder: (context, state) => LeagueHistoryScreen(
+          leagueId: state.pathParameters['leagueId']!,
+        ),
       ),
     ],
   );

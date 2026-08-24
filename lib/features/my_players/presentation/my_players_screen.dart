@@ -8,8 +8,8 @@ import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
 import '../../../core/widgets/compact_data_table.dart';
 import '../../../core/widgets/section_placeholder.dart';
-import '../../../domain/models/club_offer.dart';
 import '../../../domain/models/player.dart';
+import '../../../domain/models/player_season_stats.dart';
 
 class MyPlayersScreen extends ConsumerWidget {
   const MyPlayersScreen({super.key});
@@ -36,12 +36,15 @@ class MyPlayersScreen extends ConsumerWidget {
               players.fold(0, (total, player) => total + player.value),
         ),
         CompactTableHeader(
-          identityLabel: 'PLAYER / CLUB',
+          identityLabel: 'PLAYER / STATUS',
           trailing: const [
             CompactColumnLabel('AGE', width: 28),
-            CompactColumnLabel('OVR', width: 38),
-            CompactColumnLabel('POT', width: 38),
-            CompactColumnLabel('ACTION', width: 58),
+            CompactColumnLabel('OVR', width: 36),
+            CompactColumnLabel('P', width: 22),
+            CompactColumnLabel('G', width: 20),
+            CompactColumnLabel('A', width: 20),
+            CompactColumnLabel('PTS', width: 30),
+            CompactColumnLabel('EXP', width: 38),
           ],
         ),
         Expanded(
@@ -55,53 +58,36 @@ class MyPlayersScreen extends ConsumerWidget {
                   ? player.isRetired
                       ? 'Retired'
                       : 'Free agent'
-                  : game.clubById(player.clubId!)?.name ?? 'Unknown club';
+                  : '${game.clubById(player.clubId!)?.name ?? 'Unknown club'}${player.isOnLoan ? ' (loan)' : ''}';
               final injury = game.activeInjuryForPlayer(player.id);
+              final currentStats = _CurrentOutput.from(
+                game
+                    .statsForPlayer(player.id)
+                    .where((stats) => stats.season == game.currentSeason),
+              );
               return _PlayerRow(
                 player: player,
                 clubName: clubName,
+                offerCount: game.pendingOffersForPlayer(player.id).length,
                 availabilityLabel: injury == null
                     ? 'Fatigue ${player.fatigue.round()}%'
                     : game.injuryAvailabilityLabel(injury),
                 isInjured: injury != null,
                 isAlternate: index.isOdd,
-                pendingOfferCount:
-                    game.pendingOffersForPlayer(player.id).length,
+                currentStats: currentStats,
+                showPotential: game.canViewPotential(player),
+                contractExpiry: player.contractEndSeason == null
+                    ? '—'
+                    : '${game.careerStartYear + player.contractEndSeason!}',
+                isExpiringSoon: player.contractEndSeason != null &&
+                    player.contractEndSeason! <= game.currentSeason + 1,
                 onOpen: () => context.push(AppRoutes.playerDetails(player.id)),
-                onSuggest: () => _suggestPlayer(context, ref, player),
               );
             },
           ),
         ),
       ],
     );
-  }
-
-  void _suggestPlayer(BuildContext context, WidgetRef ref, Player player) {
-    final result =
-        ref.read(gameControllerProvider.notifier).suggestPlayer(player.id);
-    final canShowOffers = result.status == SuggestionStatus.success ||
-        result.status == SuggestionStatus.alreadySuggested;
-    if (canShowOffers) {
-      showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: AppColors.navy,
-        builder: (context) => _PlayerOffersSheet(playerId: player.id),
-      );
-      return;
-    }
-
-    final message = switch (result.status) {
-      SuggestionStatus.noActiveGame => 'Start a career first.',
-      SuggestionStatus.playerUnavailable =>
-        '${player.name} cannot be suggested right now.',
-      SuggestionStatus.noClubInterest =>
-        'No clubs are interested in ${player.name} this week.',
-      SuggestionStatus.success || SuggestionStatus.alreadySuggested => '',
-    };
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -115,54 +101,41 @@ class _RosterHeader extends StatelessWidget {
   final double portfolioValue;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 37,
-      padding: const EdgeInsets.symmetric(horizontal: 13),
-      color: AppColors.navy,
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              '$playerCount ${playerCount == 1 ? 'PLAYER' : 'PLAYERS'} REPRESENTED',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: AppColors.teal,
-                  ),
-            ),
-          ),
-          Text(
+  Widget build(BuildContext context) => CompactSectionBar(
+        title:
+            '$playerCount ${playerCount == 1 ? 'player' : 'players'} represented',
+        trailing:
             'PORTFOLIO  ${GameFormatters.compactCurrency(portfolioValue)}',
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: AppColors.amber,
-                  fontSize: 8,
-                ),
-          ),
-        ],
-      ),
-    );
-  }
+        accent: AppColors.teal,
+      );
 }
 
 class _PlayerRow extends StatelessWidget {
   const _PlayerRow({
     required this.player,
     required this.clubName,
-    required this.pendingOfferCount,
+    required this.offerCount,
     required this.availabilityLabel,
     required this.isInjured,
     required this.isAlternate,
+    required this.currentStats,
+    required this.showPotential,
+    required this.contractExpiry,
+    required this.isExpiringSoon,
     required this.onOpen,
-    required this.onSuggest,
   });
 
   final Player player;
   final String clubName;
-  final int pendingOfferCount;
+  final int offerCount;
   final String availabilityLabel;
   final bool isInjured;
   final bool isAlternate;
+  final _CurrentOutput currentStats;
+  final bool showPotential;
+  final String contractExpiry;
+  final bool isExpiringSoon;
   final VoidCallback onOpen;
-  final VoidCallback onSuggest;
 
   @override
   Widget build(BuildContext context) {
@@ -174,254 +147,179 @@ class _PlayerRow extends StatelessWidget {
             : canSuggest
                 ? AppColors.amber
                 : AppColors.teal;
-    return Material(
+    return CompactRowSurface(
       key: Key('representedPlayerCard-${player.id}'),
-      color: isAlternate ? AppColors.panelAlt : AppColors.navy,
-      child: InkWell(
-        onTap: onOpen,
-        child: Container(
-          height: 59,
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: AppColors.slate)),
-          ),
-          child: Row(
-            children: [
-              Container(width: 3, color: railColor),
-              const SizedBox(width: 7),
-              CompactPositionBadge(label: player.position.shortLabel),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+      railColor: railColor,
+      isAlternate: isAlternate,
+      onTap: onOpen,
+      semanticLabel: '${player.name}, $clubName, ${player.age} years old',
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Text(
-                      player.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                          ),
+                    Flexible(
+                      child: Text(
+                        player.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '$clubName  ·  $availabilityLabel  ·  ${GameFormatters.compactCurrency(player.value)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color:
-                                isInjured ? AppColors.danger : AppColors.muted,
-                            fontSize: 9,
+                    if (offerCount > 0) ...[
+                      const SizedBox(width: 5),
+                      Container(
+                        key: Key('playerOfferCount-${player.id}'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 2,
+                        ),
+                        color: AppColors.amber.withValues(alpha: 0.14),
+                        child: Text(
+                          '$offerCount ${offerCount == 1 ? 'OFFER' : 'OFFERS'}',
+                          style: const TextStyle(
+                            color: AppColors.amber,
+                            fontSize: 7,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.35,
                           ),
-                    ),
+                        ),
+                      ),
+                    ],
+                    if (showPotential) ...[
+                      const SizedBox(width: 5),
+                      Text(
+                        'POT ${player.potential}',
+                        key: Key('knownPotential-${player.id}'),
+                        style: const TextStyle(
+                          color: AppColors.teal,
+                          fontSize: 7.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.25,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
-              ),
-              SizedBox(
-                width: 28,
-                child: Text(
-                  '${player.age}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: AppColors.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
+                const SizedBox(height: 2),
+                Text(
+                  '${player.position.shortLabel}  ·  $clubName  ·  $availabilityLabel',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: isInjured ? AppColors.danger : AppColors.muted,
+                        fontSize: 9,
+                      ),
                 ),
+              ],
+            ),
+          ),
+          SizedBox(
+            width: 28,
+            child: Text(
+              '${player.age}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.muted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
               ),
-              CompactRatingCell(
-                value: player.ability,
-                color: compactRatingColor(player.ability),
-              ),
-              CompactRatingCell(
-                value: player.potential,
-                color: AppColors.teal,
-                emphasized: true,
-              ),
-              SizedBox(
-                width: 58,
-                child: TextButton(
-                  key: Key('suggestPlayerButton-${player.id}'),
-                  onPressed: canSuggest ? onSuggest : null,
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppColors.teal,
-                    disabledForegroundColor: AppColors.muted,
-                    padding: const EdgeInsets.symmetric(horizontal: 2),
-                    shape: const RoundedRectangleBorder(),
-                  ),
-                  child: Text(
-                    pendingOfferCount > 0
-                        ? '$pendingOfferCount OFFER${pendingOfferCount == 1 ? '' : 'S'}'
-                        : canSuggest
-                            ? 'SUGGEST'
-                            : player.isRetired
-                                ? 'RETIRED'
-                                : 'SIGNED',
-                    style: const TextStyle(
-                      fontSize: 8,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+            ),
+          ),
+          CompactRatingCell(
+            value: player.ability,
+            color: compactRatingColor(player.ability),
+            width: 36,
+          ),
+          _NumberCell(value: '${currentStats.appearances}', width: 22),
+          _NumberCell(value: '${currentStats.goals}', width: 20),
+          _NumberCell(value: '${currentStats.assists}', width: 20),
+          _NumberCell(
+            value: currentStats.appearances == 0
+                ? '—'
+                : currentStats.averageRating.toStringAsFixed(1),
+            width: 30,
+            color: currentStats.appearances == 0
+                ? AppColors.muted
+                : AppColors.teal,
+          ),
+          _NumberCell(
+            value: contractExpiry,
+            width: 38,
+            color: isExpiringSoon ? AppColors.amber : AppColors.muted,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CurrentOutput {
+  const _CurrentOutput({
+    required this.appearances,
+    required this.goals,
+    required this.assists,
+    required this.totalRating,
+  });
+
+  factory _CurrentOutput.from(Iterable<PlayerSeasonStats> rows) {
+    var appearances = 0;
+    var goals = 0;
+    var assists = 0;
+    var totalRating = 0.0;
+    for (final row in rows) {
+      appearances += row.appearances;
+      goals += row.goals;
+      assists += row.assists;
+      totalRating += row.totalRating;
+    }
+    return _CurrentOutput(
+      appearances: appearances,
+      goals: goals,
+      assists: assists,
+      totalRating: totalRating,
+    );
+  }
+
+  final int appearances;
+  final int goals;
+  final int assists;
+  final double totalRating;
+
+  double get averageRating => appearances == 0 ? 0 : totalRating / appearances;
+}
+
+class _NumberCell extends StatelessWidget {
+  const _NumberCell({
+    required this.value,
+    required this.width,
+    this.color = AppColors.paper,
+  });
+
+  final String value;
+  final double width;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: width,
+        child: Text(
+          value,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          style: TextStyle(
+            color: color,
+            fontSize: 9.5,
+            fontWeight: FontWeight.w800,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _PlayerOffersSheet extends ConsumerWidget {
-  const _PlayerOffersSheet({required this.playerId});
-
-  final String playerId;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final game = ref.watch(gameControllerProvider);
-    if (game == null) return const SizedBox.shrink();
-    final player = game.players.firstWhere((player) => player.id == playerId);
-    final offers = game.pendingOffersForPlayer(playerId);
-
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          16,
-          12,
-          16,
-          16 + MediaQuery.viewInsetsOf(context).bottom,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.muted,
-                  borderRadius: BorderRadius.circular(3),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text('Offers for ${player.name}',
-                style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 4),
-            Text(
-              '${offers.length} active club ${offers.length == 1 ? 'offer' : 'offers'}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppColors.muted,
-                  ),
-            ),
-            const SizedBox(height: 14),
-            if (offers.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Text('No active offers remain.'),
-              )
-            else
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: offers.length,
-                  separatorBuilder: (context, index) =>
-                      const SizedBox(height: 8),
-                  itemBuilder: (context, index) =>
-                      _OfferRow(offer: offers[index]),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _OfferRow extends ConsumerWidget {
-  const _OfferRow({required this.offer});
-
-  final ClubOffer offer;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final game = ref.watch(gameControllerProvider)!;
-    final club = game.clubById(offer.clubId)!;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(club.name,
-                      style: Theme.of(context).textTheme.titleSmall),
-                ),
-                Text('${offer.contractLength} years'),
-              ],
-            ),
-            const SizedBox(height: 9),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${GameFormatters.compactCurrency(offer.weeklySalary)}/wk',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                ),
-                Text(
-                  'Fee ${GameFormatters.compactCurrency(offer.agentFee)}',
-                  style: const TextStyle(color: AppColors.amber),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '${(offer.salaryCommissionRate * 100).round()}% salary commission · ${GameFormatters.compactCurrency(offer.weeklySalary * offer.salaryCommissionRate)}/wk agency income',
-                style: const TextStyle(color: AppColors.muted, fontSize: 9),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => ref
-                        .read(gameControllerProvider.notifier)
-                        .declineOffer(offer.id),
-                    child: const Text('Decline'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    key: Key('acceptOfferButton-${offer.id}'),
-                    onPressed: () {
-                      final result = ref
-                          .read(gameControllerProvider.notifier)
-                          .acceptOffer(offer.id);
-                      if (result == DealActionResult.success) {
-                        final messenger = ScaffoldMessenger.of(context);
-                        Navigator.of(context).pop();
-                        messenger.showSnackBar(
-                          SnackBar(
-                              content: Text('${club.name} deal completed.')),
-                        );
-                      }
-                    },
-                    child: const Text('Suggest deal'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+      );
 }

@@ -59,9 +59,19 @@ class _MainMenuScreenState extends ConsumerState<MainMenuScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: AgencyMark(size: 60),
+                    const Row(
+                      children: [
+                        AgencyMark(size: 60),
+                        SizedBox(width: 14),
+                        Text(
+                          'TOP AGENT',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 2.2,
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 28),
                     Text(

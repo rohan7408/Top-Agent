@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import '../models/player.dart';
+import '../models/player_personality.dart';
 import 'game_balance.dart';
 import 'player_attribute_generator.dart';
 
@@ -84,18 +85,22 @@ class TalentGenerator {
   List<Player> generateForScout({
     required int count,
     required int scoutAbility,
+    String? scoutedByScoutId,
+    int maximumAbility = 99,
     required int seed,
     required String idPrefix,
   }) {
     final safeAbility = scoutAbility.clamp(25, 99);
+    final safeMaximum = min(safeAbility + 5, maximumAbility.clamp(25, 99));
     return _generateInBand(
       count: count,
       ratingBand: TalentRatingBand(
-        minimumAbility: max(25, safeAbility - 25),
-        maximumAbility: min(99, safeAbility + 5),
+        minimumAbility: max(25, min(safeAbility - 25, safeMaximum - 8)),
+        maximumAbility: safeMaximum,
       ),
       seed: seed,
       idPrefix: idPrefix,
+      scoutedByScoutId: scoutedByScoutId,
     );
   }
 
@@ -122,6 +127,7 @@ class TalentGenerator {
     required TalentRatingBand ratingBand,
     required int seed,
     required String idPrefix,
+    String? scoutedByScoutId,
   }) {
     final random = Random(seed);
 
@@ -130,11 +136,11 @@ class TalentGenerator {
           ratingBand.maximumAbility - ratingBand.minimumAbility + 1;
       final targetAbility =
           ratingBand.minimumAbility + random.nextInt(abilityRange);
-      final age = 16 + random.nextInt(5);
+      final age = 16 + random.nextInt(4);
       final position = PlayerPosition.values[random.nextInt(
         PlayerPosition.values.length,
       )];
-      final attributes = attributeGenerator.generate(
+      var attributes = attributeGenerator.generate(
         ability: targetAbility,
         position: position,
         random: random,
@@ -143,7 +149,18 @@ class TalentGenerator {
         position: position,
         random: random,
       );
-      final ability = Player.calculateOverall(position, attributes);
+      var ability = Player.calculateOverall(position, attributes);
+      for (var attempt = 0;
+          ability > ratingBand.maximumAbility && attempt < 5;
+          attempt++) {
+        final reduction = ability - ratingBand.maximumAbility;
+        attributes = attributes.evolve(
+          technicalDelta: -reduction,
+          mentalDelta: -reduction,
+          physicalDelta: -reduction,
+        );
+        ability = Player.calculateOverall(position, attributes);
+      }
       final potential =
           min(99, max(ability, targetAbility + 10 + random.nextInt(16)));
       final value = balance.playerMarketValue(
@@ -166,6 +183,13 @@ class TalentGenerator {
         value: value.roundToDouble(),
         salary: 0,
         isRecruited: false,
+        personality: PlayerPersonality(
+          professionalism: 30 + random.nextInt(61),
+          discipline: 25 + random.nextInt(71),
+          ambition: 35 + random.nextInt(61),
+          mediaAppeal: 20 + random.nextInt(76),
+        ),
+        scoutedByScoutId: scoutedByScoutId,
       );
     }, growable: false);
   }

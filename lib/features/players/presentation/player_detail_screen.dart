@@ -7,6 +7,8 @@ import '../../../app/theme/app_colors.dart';
 import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
 import '../../../core/widgets/compact_data_table.dart';
+import '../../../core/widgets/compact_page_chrome.dart';
+import '../../../core/widgets/section_placeholder.dart';
 import '../../../domain/models/game_state.dart';
 import '../../../domain/models/match_result.dart';
 import '../../../domain/models/player.dart';
@@ -15,6 +17,9 @@ import '../../../domain/models/player_match_performance.dart';
 import '../../../domain/models/player_season_stats.dart';
 import '../../../domain/models/player_training_plan.dart';
 import '../../../domain/services/player_achievement_service.dart';
+import '../../../domain/services/season_calendar.dart';
+import '../../../domain/services/transfer_eligibility.dart';
+import '../../offers/presentation/offer_negotiation_sheet.dart';
 
 class PlayerDetailScreen extends ConsumerWidget {
   const PlayerDetailScreen({required this.playerId, super.key});
@@ -27,22 +32,30 @@ class PlayerDetailScreen extends ConsumerWidget {
     final player =
         game?.players.where((item) => item.id == playerId).firstOrNull;
     if (game == null || player == null) {
-      return const Scaffold(body: Center(child: Text('Player not found.')));
+      return const Scaffold(
+        body: SectionPlaceholder(
+          icon: Icons.person_off_outlined,
+          title: 'Player not found',
+          message: 'This player is no longer available in the current career.',
+        ),
+      );
     }
 
-    final stats = game.statsForPlayer(player.id);
+    final stats = _careerStatsForPlayer(game, player);
     final currentStats = _PlayerTotals.from(
       stats.where((item) => item.season == game.currentSeason),
     );
-    final careerStats = _PlayerTotals.from(stats);
     final performances = game.performancesForPlayer(player.id);
     final achievements =
         const PlayerAchievementService().achievementsFor(game, player.id);
-    final clubName = player.clubId == null
+    final currentClubName = player.clubId == null
         ? player.isRetired
             ? 'Retired'
             : 'Free agent'
         : game.clubById(player.clubId!)?.name ?? 'Unknown club';
+    final clubName = player.isOnLoan
+        ? '$currentClubName · Loan from ${game.clubById(player.loanParentClubId!)?.name ?? 'parent club'}'
+        : currentClubName;
     final injury = game.activeInjuryForPlayer(player.id);
     final availability = player.isRetired
         ? 'Retired · ${game.seasonLabel(player.retirementSeason ?? game.currentSeason)}'
@@ -56,30 +69,12 @@ class PlayerDetailScreen extends ConsumerWidget {
         appBar: AppBar(
           toolbarHeight: 46,
           titleSpacing: 0,
-          title: Text(
-            player.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleMedium,
+          title: CompactPageTitle(
+            title: player.name,
+            eyebrow: '$clubName · ${player.position.shortLabel}',
           ),
-          bottom: const PreferredSize(
-            preferredSize: Size.fromHeight(38),
-            child: SizedBox(
-              height: 38,
-              child: TabBar(
-                isScrollable: false,
-                labelPadding: EdgeInsets.zero,
-                labelStyle:
-                    TextStyle(fontSize: 10, fontWeight: FontWeight.w800),
-                unselectedLabelStyle:
-                    TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
-                tabs: [
-                  Tab(text: 'Overview'),
-                  Tab(text: 'Career'),
-                  Tab(text: 'Season'),
-                ],
-              ),
-            ),
+          bottom: const CompactTabBar(
+            labels: ['Overview', 'Career', 'Season'],
           ),
         ),
         body: TabBarView(
@@ -91,6 +86,7 @@ class PlayerDetailScreen extends ConsumerWidget {
               representedByAgent: player.agentId == game.agent.id,
               availability: availability,
               achievements: achievements,
+              showPotential: game.canViewPotential(player),
               onEndRepresentation: player.agentId == game.agent.id
                   ? () => _confirmEndRepresentation(
                         context,
@@ -101,8 +97,9 @@ class PlayerDetailScreen extends ConsumerWidget {
                   : null,
             ),
             _CareerTab(
-              totals: careerStats,
-              seasonCount: stats.map((item) => item.season).toSet().length,
+              game: game,
+              player: player,
+              stats: stats,
             ),
             _SeasonsTab(
               game: game,
@@ -219,7 +216,7 @@ class _PlayerHeader extends StatelessWidget {
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color:
                           representedByAgent ? AppColors.teal : AppColors.muted,
-                      fontSize: 7,
+                      fontSize: 8,
                     ),
               ),
             ),
@@ -246,7 +243,7 @@ class _Rating extends StatelessWidget {
           Text(label,
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: AppColors.muted,
-                    fontSize: 7,
+                    fontSize: 8,
                   )),
         ],
       );
@@ -260,6 +257,7 @@ class _OverviewTab extends StatelessWidget {
     required this.representedByAgent,
     required this.availability,
     required this.achievements,
+    required this.showPotential,
     required this.onEndRepresentation,
   });
 
@@ -269,54 +267,76 @@ class _OverviewTab extends StatelessWidget {
   final bool representedByAgent;
   final String availability;
   final List<PlayerAchievement> achievements;
+  final bool showPotential;
   final VoidCallback? onEndRepresentation;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        key: const Key('playerOverviewTab'),
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-        child: Column(
-          children: [
-            _PlayerHeader(
-              player: player,
-              clubName: clubName,
-              representedByAgent: representedByAgent,
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (context, constraints) {
+          final compactHeight = constraints.maxHeight < 600;
+          final gap = compactHeight ? 4.0 : 8.0;
+          return Padding(
+            key: const Key('playerOverviewTab'),
+            padding: EdgeInsets.fromLTRB(
+              12,
+              4,
+              12,
+              compactHeight ? 4 : 12,
             ),
-            const SizedBox(height: 8),
-            _RatingsPanel(player: player),
-            const SizedBox(height: 8),
-            _EssentialInformationPanel(
-              player: player,
-              clubName: clubName,
-              availability: availability,
-            ),
-            const SizedBox(height: 8),
-            _SeasonStrip(totals: currentStats),
-            const SizedBox(height: 8),
-            _AchievementsPanel(achievements: achievements),
-            if (onEndRepresentation != null) ...[
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 34,
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  key: const Key('endRepresentationButton'),
-                  onPressed: onEndRepresentation,
-                  icon: const Icon(Icons.person_remove_alt_1_rounded, size: 14),
-                  label: const Text('END REPRESENTATION'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.danger,
-                    side: const BorderSide(color: AppColors.danger),
-                    textStyle: const TextStyle(
-                      fontSize: 8,
-                      fontWeight: FontWeight.w900,
+            child: Column(
+              children: [
+                _PlayerHeader(
+                  player: player,
+                  clubName: clubName,
+                  representedByAgent: representedByAgent,
+                ),
+                SizedBox(height: gap),
+                _RatingsPanel(
+                  player: player,
+                  showPotential: showPotential,
+                ),
+                SizedBox(height: gap),
+                _EssentialInformationPanel(
+                  player: player,
+                  clubName: clubName,
+                  availability: availability,
+                  compact: compactHeight,
+                ),
+                SizedBox(height: gap),
+                _SeasonStrip(totals: currentStats),
+                SizedBox(height: gap),
+                _AchievementsPanel(
+                  achievements: achievements,
+                  compact: compactHeight,
+                ),
+                if (onEndRepresentation != null) ...[
+                  SizedBox(height: gap),
+                  SizedBox(
+                    height: 44,
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      key: const Key('endRepresentationButton'),
+                      onPressed: onEndRepresentation,
+                      icon: const Icon(
+                        Icons.person_remove_alt_1_rounded,
+                        size: 14,
+                      ),
+                      label: const Text('END REPRESENTATION'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.danger,
+                        side: const BorderSide(color: AppColors.danger),
+                        textStyle: const TextStyle(
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
-            ],
-          ],
-        ),
+                ],
+              ],
+            ),
+          );
+        },
       );
 }
 
@@ -325,16 +345,19 @@ class _EssentialInformationPanel extends StatelessWidget {
     required this.player,
     required this.clubName,
     required this.availability,
+    required this.compact,
   });
 
   final Player player;
   final String clubName;
   final String availability;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    final rowHeight = compact ? 24.0 : 26.0;
     return Container(
-      height: 190,
+      height: compact ? 176 : 190,
       decoration: const BoxDecoration(
         border: Border.symmetric(
           horizontal: BorderSide(color: AppColors.slate),
@@ -343,7 +366,7 @@ class _EssentialInformationPanel extends StatelessWidget {
       child: Column(
         children: [
           SizedBox(
-            height: 26,
+            height: rowHeight,
             child: _EssentialRow(
               label: 'Club',
               value: clubName,
@@ -354,20 +377,15 @@ class _EssentialInformationPanel extends StatelessWidget {
           ),
           const Divider(height: 1),
           SizedBox(
-            height: 26,
+            height: rowHeight,
             child: _EssentialRow(
-              label: 'Position',
-              value: player.position.label,
+              label: 'Role',
+              value: '${player.position.label} · ${player.age} years',
             ),
           ),
           const Divider(height: 1),
           SizedBox(
-            height: 26,
-            child: _EssentialRow(label: 'Age', value: '${player.age} years'),
-          ),
-          const Divider(height: 1),
-          SizedBox(
-            height: 26,
+            height: rowHeight,
             child: _EssentialRow(
               label: 'Body',
               value: '${player.heightCm} cm / ${player.weightKg} kg',
@@ -375,26 +393,38 @@ class _EssentialInformationPanel extends StatelessWidget {
           ),
           const Divider(height: 1),
           SizedBox(
-            height: 26,
+            height: rowHeight,
             child: _EssentialRow(
-              label: 'Value',
-              value: GameFormatters.compactCurrency(player.value),
+              label: 'Value / wage',
+              value:
+                  '${GameFormatters.compactCurrency(player.value)} / ${GameFormatters.compactCurrency(player.salary)}/wk',
             ),
           ),
           const Divider(height: 1),
           SizedBox(
-            height: 26,
-            child: _EssentialRow(
-              label: 'Wage',
-              value: '${GameFormatters.compactCurrency(player.salary)}/wk',
-            ),
-          ),
-          const Divider(height: 1),
-          SizedBox(
-            height: 26,
+            height: rowHeight,
             child: _EssentialRow(
               label: 'Fitness',
               value: availability,
+            ),
+          ),
+          const Divider(height: 1),
+          SizedBox(
+            height: rowHeight,
+            child: _EssentialRow(
+              label: 'Agency trust',
+              value: player.agencyRelationshipWeeks == 0
+                  ? '${player.agentTrust}'
+                  : '${player.agentTrust} · ${player.agencyRelationshipWeeks} weeks',
+            ),
+          ),
+          const Divider(height: 1),
+          SizedBox(
+            height: rowHeight,
+            child: _EssentialRow(
+              label: 'Character',
+              value:
+                  'PRO ${player.personality.professionalism} · DIS ${player.personality.discipline} · AMB ${player.personality.ambition} · MED ${player.personality.mediaAppeal}',
             ),
           ),
         ],
@@ -424,7 +454,7 @@ class _EssentialRow extends StatelessWidget {
             child: Row(
               children: [
                 SizedBox(
-                  width: 52,
+                  width: 78,
                   child: Text(
                     label,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -495,14 +525,18 @@ class _SeasonStrip extends StatelessWidget {
 }
 
 class _AchievementsPanel extends StatelessWidget {
-  const _AchievementsPanel({required this.achievements});
+  const _AchievementsPanel({
+    required this.achievements,
+    required this.compact,
+  });
 
   final List<PlayerAchievement> achievements;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) => Container(
         key: const Key('playerAchievementsPanel'),
-        height: 72,
+        height: compact ? 64 : 72,
         decoration: const BoxDecoration(
           border: Border.symmetric(
             horizontal: BorderSide(color: AppColors.slate),
@@ -526,7 +560,7 @@ class _AchievementsPanel extends StatelessWidget {
                       'ACHIEVEMENTS',
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                             color: AppColors.amber,
-                            fontSize: 7,
+                            fontSize: 8,
                           ),
                     ),
                     const Spacer(),
@@ -534,7 +568,7 @@ class _AchievementsPanel extends StatelessWidget {
                       '${achievements.fold<int>(0, (sum, item) => sum + item.count)} WON',
                       style: const TextStyle(
                         color: AppColors.muted,
-                        fontSize: 7,
+                        fontSize: 8,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -545,10 +579,15 @@ class _AchievementsPanel extends StatelessWidget {
             const Divider(height: 1),
             Expanded(
               child: achievements.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'No senior honours yet',
-                        style: TextStyle(color: AppColors.muted, fontSize: 9),
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 12),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'No senior honours yet',
+                          textAlign: TextAlign.left,
+                          style: TextStyle(color: AppColors.muted, fontSize: 9),
+                        ),
                       ),
                     )
                   : Row(
@@ -613,7 +652,7 @@ class _AchievementCell extends StatelessWidget {
                   achievement.detail,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: AppColors.muted, fontSize: 6.5),
+                  style: const TextStyle(color: AppColors.muted, fontSize: 8),
                 ),
               ],
             ),
@@ -625,15 +664,17 @@ class _AchievementCell extends StatelessWidget {
 }
 
 class _RatingsPanel extends StatelessWidget {
-  const _RatingsPanel({required this.player});
+  const _RatingsPanel({required this.player, required this.showPotential});
 
   final Player player;
+  final bool showPotential;
 
   @override
   Widget build(BuildContext context) {
     final ratings = [
       _AttributeScore('Overall', player.ability, AppColors.amber),
-      _AttributeScore('Potential', player.potential, AppColors.teal),
+      if (showPotential)
+        _AttributeScore('Potential', player.potential, AppColors.teal),
       _AttributeScore('Attacking', player.attacking, AppColors.amber),
       _AttributeScore('Defending', player.defending, const Color(0xFF74A7FF)),
       _AttributeScore('Technical', player.technical, AppColors.teal),
@@ -641,6 +682,8 @@ class _RatingsPanel extends StatelessWidget {
       _AttributeScore('Physical', player.physical, const Color(0xFFE27D9A)),
       _AttributeScore('Speed', player.speed, const Color(0xFF67C8E8)),
     ];
+    final attributeStart = showPotential ? 2 : 1;
+    final attributes = ratings.skip(attributeStart).toList(growable: false);
     return Container(
       key: const Key('playerRatingsPanel'),
       height: 114,
@@ -658,21 +701,14 @@ class _RatingsPanel extends StatelessWidget {
                 Expanded(
                   child: _CompactRating(score: ratings[0], prominent: true),
                 ),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  child: _CompactRating(score: ratings[1], prominent: true),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          SizedBox(
-            height: 34,
-            child: Row(
-              children: [
-                for (var index = 2; index < 5; index++) ...[
-                  Expanded(child: _CompactRating(score: ratings[index])),
-                  if (index != 4) const VerticalDivider(width: 1),
+                if (showPotential) ...[
+                  const VerticalDivider(width: 1),
+                  Expanded(
+                    child: _CompactRating(
+                      score: ratings[1],
+                      prominent: true,
+                    ),
+                  ),
                 ],
               ],
             ),
@@ -682,9 +718,21 @@ class _RatingsPanel extends StatelessWidget {
             height: 34,
             child: Row(
               children: [
-                for (var index = 5; index < 8; index++) ...[
-                  Expanded(child: _CompactRating(score: ratings[index])),
-                  if (index != 7) const VerticalDivider(width: 1),
+                for (var index = 0; index < 3; index++) ...[
+                  Expanded(child: _CompactRating(score: attributes[index])),
+                  if (index != 2) const VerticalDivider(width: 1),
+                ],
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          SizedBox(
+            height: 34,
+            child: Row(
+              children: [
+                for (var index = 3; index < 6; index++) ...[
+                  Expanded(child: _CompactRating(score: attributes[index])),
+                  if (index != 5) const VerticalDivider(width: 1),
                 ],
               ],
             ),
@@ -943,7 +991,7 @@ class _TrainingMetric extends StatelessWidget {
                 label,
                 style: const TextStyle(
                   color: AppColors.muted,
-                  fontSize: 7,
+                  fontSize: 8,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1083,7 +1131,7 @@ class _IntensityChoice extends StatelessWidget {
                   intensity.effectLabel,
                   maxLines: 2,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: AppColors.muted, fontSize: 7),
+                  style: const TextStyle(color: AppColors.muted, fontSize: 8),
                 ),
               ],
             ),
@@ -1104,45 +1152,273 @@ Color _trainingFocusColor(TrainingFocus focus) => switch (focus) {
 
 class _CareerTab extends StatelessWidget {
   const _CareerTab({
-    required this.totals,
-    required this.seasonCount,
+    required this.game,
+    required this.player,
+    required this.stats,
   });
 
-  final _PlayerTotals totals;
-  final int seasonCount;
+  final GameState game;
+  final Player player;
+  final List<PlayerSeasonStats> stats;
 
   @override
   Widget build(BuildContext context) {
+    final seasonCount = stats.map((item) => item.season).toSet().length;
     return ListView(
       key: const Key('playerCareerTab'),
       padding: const EdgeInsets.only(bottom: 16),
       children: [
+        _PlayerCareerActions(game: game, player: player),
         CompactSectionBar(
-          title: 'Career output',
+          title: 'Club career',
           trailing: '$seasonCount SEASON${seasonCount == 1 ? '' : 'S'}',
           accent: AppColors.amber,
         ),
-        _StatsGrid(items: [
-          ('Appearances', '${totals.appearances}'),
-          ('Starts', '${totals.starts}'),
-          ('Minutes', '${totals.minutes}'),
-          ('Goals', '${totals.goals}'),
-          ('Assists', '${totals.assists}'),
-          ('Clean sheets', '${totals.cleanSheets}'),
-          ('Yellow cards', '${totals.yellowCards}'),
-          ('Red cards', '${totals.redCards}'),
-          ('Player of match', '${totals.playerOfTheMatchAwards}'),
-          (
-            'Average rating',
-            totals.averageRating == 0
-                ? '—'
-                : totals.averageRating.toStringAsFixed(2)
-          ),
-        ]),
-        if (totals.appearances == 0)
-          const _Notice('No senior career appearances recorded yet.'),
+        if (stats.isNotEmpty)
+          _CareerHistoryTable(game: game, player: player, stats: stats)
+        else
+          const _Notice('No club career recorded yet.'),
       ],
     );
+  }
+}
+
+class _PlayerCareerActions extends ConsumerWidget {
+  const _PlayerCareerActions({required this.game, required this.player});
+
+  final GameState game;
+  final Player player;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (player.isRetired) return const SizedBox.shrink();
+    final isRepresented = player.agentId == game.agent.id && player.isRecruited;
+    final isAvailableTalent =
+        player.clubId == null && player.agentId == null && !player.isRecruited;
+    if (!isAvailableTalent && !isRepresented) {
+      return const SizedBox.shrink();
+    }
+    final pendingOffers = game.pendingOffersForPlayer(player.id);
+    final transferWindowOpen = const SeasonCalendar().isTransferWindow(
+      game.currentWeek,
+    );
+    final canTransferPermanently =
+        const TransferEligibility().canTransferPermanently(game, player);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        CompactSectionBar(
+          title: 'Agency actions',
+          trailing: isAvailableTalent
+              ? 'AVAILABLE PROSPECT'
+              : player.clubId == null
+                  ? 'FREE AGENT'
+                  : game.clubById(player.clubId!)?.name.toUpperCase(),
+          accent: AppColors.teal,
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          child: isAvailableTalent
+              ? FilledButton.icon(
+                  key: Key('careerRecruitPlayerButton-${player.id}'),
+                  onPressed: game.isAgencyAtClientCapacity
+                      ? null
+                      : () => _recruit(context, ref),
+                  icon: const Icon(Icons.person_add_alt_1_rounded, size: 17),
+                  label: Text(
+                    game.isAgencyAtClientCapacity
+                        ? 'Office client limit reached'
+                        : 'Recruit player',
+                  ),
+                )
+              : player.clubId == null
+                  ? FilledButton.icon(
+                      key: Key('careerSuggestPlayerButton-${player.id}'),
+                      onPressed: () => pendingOffers.isEmpty
+                          ? _suggest(context, ref)
+                          : showPlayerOffersSheet(
+                              context,
+                              playerId: player.id,
+                            ),
+                      icon: Icon(
+                        pendingOffers.isEmpty
+                            ? Icons.campaign_outlined
+                            : Icons.description_outlined,
+                        size: 17,
+                      ),
+                      label: Text(
+                        pendingOffers.isEmpty
+                            ? 'Suggest player'
+                            : 'Review ${pendingOffers.length} club ${pendingOffers.length == 1 ? 'offer' : 'offers'}',
+                      ),
+                    )
+                  : pendingOffers.isNotEmpty
+                      ? FilledButton.icon(
+                          key: Key('careerReviewOffersButton-${player.id}'),
+                          onPressed: () => showPlayerOffersSheet(
+                            context,
+                            playerId: player.id,
+                          ),
+                          icon:
+                              const Icon(Icons.description_outlined, size: 17),
+                          label: Text(
+                            'Review ${pendingOffers.length} ${pendingOffers.length == 1 ? 'offer' : 'offers'}',
+                          ),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    key: Key(
+                                      'careerTransferListButton-${player.id}',
+                                    ),
+                                    onPressed: player.isTransferListed ||
+                                            !transferWindowOpen ||
+                                            !canTransferPermanently ||
+                                            player.isOnLoan
+                                        ? null
+                                        : () => _requestListing(
+                                              context,
+                                              ref,
+                                              ClubListingActionType.transfer,
+                                            ),
+                                    icon: const Icon(
+                                      Icons.swap_horiz_rounded,
+                                      size: 17,
+                                    ),
+                                    label: Text(
+                                      player.isTransferListed
+                                          ? 'Transfer listed'
+                                          : !transferWindowOpen
+                                              ? 'Window closed'
+                                              : !canTransferPermanently
+                                                  ? 'Available after 1 year'
+                                                  : 'Ask for transfer list',
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    key: Key(
+                                        'careerLoanListButton-${player.id}'),
+                                    onPressed: player.isLoanListed ||
+                                            !transferWindowOpen ||
+                                            player.isOnLoan
+                                        ? null
+                                        : () => _requestListing(
+                                              context,
+                                              ref,
+                                              ClubListingActionType.loan,
+                                            ),
+                                    icon: const Icon(
+                                      Icons.redo_rounded,
+                                      size: 17,
+                                    ),
+                                    label: Text(
+                                      player.isLoanListed
+                                          ? 'Loan listed'
+                                          : player.isOnLoan
+                                              ? 'Currently on loan'
+                                              : !transferWindowOpen
+                                                  ? 'Window closed'
+                                                  : 'Ask for loan list',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (!transferWindowOpen)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 5),
+                                child: Text(
+                                  'Listing requests open during transfer windows.',
+                                  textAlign: TextAlign.left,
+                                  style: TextStyle(
+                                    color: AppColors.muted,
+                                    fontSize: 8,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+        ),
+      ],
+    );
+  }
+
+  void _recruit(BuildContext context, WidgetRef ref) {
+    final result =
+        ref.read(gameControllerProvider.notifier).recruitPlayer(player.id);
+    final message = switch (result) {
+      RecruitmentResult.success => '${player.name} joined your agency.',
+      RecruitmentResult.noActiveGame => 'Start a career before recruiting.',
+      RecruitmentResult.playerNotFound => 'That player no longer exists.',
+      RecruitmentResult.playerUnavailable =>
+        '${player.name} is no longer available.',
+      RecruitmentResult.officeFull =>
+        'Upgrade the Office before recruiting another client.',
+    };
+    _message(context, message);
+  }
+
+  void _suggest(BuildContext context, WidgetRef ref) {
+    final result =
+        ref.read(gameControllerProvider.notifier).suggestPlayer(player.id);
+    if (result.status == SuggestionStatus.success ||
+        result.status == SuggestionStatus.alreadySuggested) {
+      showPlayerOffersSheet(context, playerId: player.id);
+      return;
+    }
+    final message = switch (result.status) {
+      SuggestionStatus.noActiveGame => 'Start a career first.',
+      SuggestionStatus.playerUnavailable =>
+        '${player.name} cannot be suggested right now.',
+      SuggestionStatus.noClubInterest =>
+        'No clubs are interested in ${player.name} this week.',
+      SuggestionStatus.success || SuggestionStatus.alreadySuggested => '',
+    };
+    _message(context, message);
+  }
+
+  void _requestListing(
+    BuildContext context,
+    WidgetRef ref,
+    ClubListingActionType type,
+  ) {
+    final result = ref
+        .read(gameControllerProvider.notifier)
+        .requestClubListing(player.id, type);
+    final label = type == ClubListingActionType.transfer ? 'transfer' : 'loan';
+    final message = switch (result.status) {
+      ClubListingActionStatus.success when result.recentSigningPenaltyApplied =>
+        '${player.name} is now $label listed. The early request cost 2 reputation and damaged the club relationship.',
+      ClubListingActionStatus.success => '${player.name} is now $label listed.',
+      ClubListingActionStatus.noActiveContract =>
+        'No active club contract could be found.',
+      ClubListingActionStatus.alreadyListed =>
+        '${player.name} is already $label listed.',
+      ClubListingActionStatus.transferWindowClosed =>
+        'Listing requests are only available during transfer windows.',
+      ClubListingActionStatus.permanentTransferTooSoon =>
+        '${player.name} must complete one year at the club before transferring.',
+      ClubListingActionStatus.alreadyOnLoan =>
+        '${player.name} is already away on loan.',
+      ClubListingActionStatus.noActiveGame ||
+      ClubListingActionStatus.playerUnavailable =>
+        'The club request could not be made.',
+    };
+    _message(context, message);
+  }
+
+  void _message(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -1287,32 +1563,31 @@ class _SeasonsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final seasons = {
-      ...stats.map((item) => item.season),
-      ...performances.map((item) => item.season),
-    }.toList(growable: true)
-      ..sort((first, second) => second.compareTo(first));
-    if (seasons.isEmpty) {
-      return const Center(
+    final currentStats = stats
+        .where((item) => item.season == game.currentSeason)
+        .toList(growable: false);
+    final currentPerformances = performances
+        .where((item) => item.season == game.currentSeason)
+        .toList(growable: false);
+    if (currentStats.isEmpty && currentPerformances.isEmpty) {
+      return SectionPlaceholder(
         key: Key('playerSeasonsTab'),
-        child: _Notice('No senior season appearances recorded yet.'),
+        icon: Icons.calendar_month_outlined,
+        title: 'No current-season appearances',
+        message:
+            'Match output for ${game.seasonLabel(game.currentSeason)} will appear here.',
       );
     }
     return ListView(
       key: const Key('playerSeasonsTab'),
       padding: const EdgeInsets.only(bottom: 16),
       children: [
-        for (final season in seasons)
-          _SeasonAppearanceSection(
-            game: game,
-            season: season,
-            stats: stats
-                .where((item) => item.season == season)
-                .toList(growable: false),
-            performances: performances
-                .where((item) => item.season == season)
-                .toList(growable: false),
-          ),
+        _SeasonAppearanceSection(
+          game: game,
+          season: game.currentSeason,
+          stats: currentStats,
+          performances: currentPerformances,
+        ),
       ],
     );
   }
@@ -1338,17 +1613,11 @@ class _SeasonAppearanceSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         CompactSectionBar(
-          title: game.seasonLabel(season),
+          title: 'Current season · ${game.seasonLabel(season)}',
           trailing:
               '${totals.appearances} APP · ${totals.goals} G · ${totals.assists} A',
           accent: AppColors.ratingBlue,
         ),
-        for (final item in stats)
-          _CareerRow(
-            stats: item,
-            seasonLabel: game.seasonLabel(item.season),
-            clubName: game.clubById(item.clubId)?.name ?? 'Unknown club',
-          ),
         Container(
           height: 24,
           padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1359,7 +1628,7 @@ class _SeasonAppearanceSection extends StatelessWidget {
                 'ALL APPEARANCES · ${performances.length}',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: AppColors.muted,
-                      fontSize: 7,
+                      fontSize: 8,
                     ),
               ),
               const Spacer(),
@@ -1367,7 +1636,7 @@ class _SeasonAppearanceSection extends StatelessWidget {
                 'MIN   G   A   RTG',
                 style: TextStyle(
                   color: AppColors.muted,
-                  fontSize: 7,
+                  fontSize: 8,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -1376,10 +1645,10 @@ class _SeasonAppearanceSection extends StatelessWidget {
         ),
         if (performances.isEmpty)
           const Padding(
-            padding: EdgeInsets.symmetric(vertical: 14),
+            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
             child: Text(
               'No appearances recorded in this season.',
-              textAlign: TextAlign.center,
+              textAlign: TextAlign.left,
               style: TextStyle(color: AppColors.muted, fontSize: 9),
             ),
           )
@@ -1396,128 +1665,312 @@ class _SeasonAppearanceSection extends StatelessWidget {
   }
 }
 
-class _CareerRow extends StatelessWidget {
-  const _CareerRow({
+class _CareerHistoryTable extends StatelessWidget {
+  const _CareerHistoryTable({
+    required this.game,
+    required this.player,
     required this.stats,
-    required this.clubName,
-    required this.seasonLabel,
   });
-  final PlayerSeasonStats stats;
-  final String clubName;
-  final String seasonLabel;
+
+  final GameState game;
+  final Player player;
+  final List<PlayerSeasonStats> stats;
+
+  static const _yearWidth = 50.0;
+  static const _overallWidth = 34.0;
+  static const _valueWidth = 52.0;
+  static const _outputWidth = 22.0;
+  static const _ratingWidth = 36.0;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 76,
-              child: Text(seasonLabel,
-                  style: const TextStyle(
-                      color: AppColors.teal, fontWeight: FontWeight.w900)),
-            ),
-            Expanded(
-              child:
-                  Text(clubName, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-            _CareerMetric('${stats.appearances}', 'APP'),
-            _CareerMetric('${stats.goals}', 'G'),
-            _CareerMetric('${stats.assists}', 'A'),
-            _CareerMetric(
-                stats.averageRating == 0
-                    ? '—'
-                    : stats.averageRating.toStringAsFixed(1),
-                'RTG'),
+  Widget build(BuildContext context) {
+    final totals = _PlayerTotals.from(stats);
+    return Column(
+      children: [
+        _CareerTableLine(
+          isHeader: true,
+          cells: const [
+            _CareerCell('YEAR', width: _yearWidth, alignLeft: true),
+            _CareerCell('CLUB', expanded: true, alignLeft: true),
+            _CareerCell('OVR', width: _overallWidth),
+            _CareerCell('VALUE', width: _valueWidth),
+            _CareerCell('P', width: _outputWidth),
+            _CareerCell('G', width: _outputWidth),
+            _CareerCell('A', width: _outputWidth),
+            _CareerCell('PT', width: _ratingWidth),
           ],
         ),
-      );
-}
-
-class _CareerMetric extends StatelessWidget {
-  const _CareerMetric(this.value, this.label);
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        width: 40,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
-            Text(label,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: AppColors.muted,
-                      fontSize: 7,
-                    )),
-          ],
-        ),
-      );
-}
-
-class _StatsGrid extends StatelessWidget {
-  const _StatsGrid({required this.items});
-  final List<(String, String)> items;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        decoration: const BoxDecoration(
-          border: Border.symmetric(
-            horizontal: BorderSide(color: AppColors.slate),
+        for (var index = 0; index < stats.length; index++)
+          _CareerHistoryRow(
+            game: game,
+            player: player,
+            stats: stats[index],
+            isAlternate: index.isOdd,
           ),
-        ),
-        child: Column(
-          children: [
-            for (var index = 0; index < items.length; index += 2) ...[
-              SizedBox(
-                height: 44,
-                child: Row(
-                  children: [
-                    Expanded(child: _StatCell(item: items[index])),
-                    const VerticalDivider(width: 1),
-                    Expanded(child: _StatCell(item: items[index + 1])),
-                  ],
-                ),
-              ),
-              if (index < items.length - 2) const Divider(height: 1),
-            ],
+        _CareerTableLine(
+          key: const Key('playerCareerTotals'),
+          emphasized: true,
+          cells: [
+            const _CareerCell('TOTAL', width: _yearWidth, alignLeft: true),
+            const _CareerCell('', expanded: true, alignLeft: true),
+            const _CareerCell('', width: _overallWidth),
+            const _CareerCell('', width: _valueWidth),
+            _CareerCell('${totals.appearances}', width: _outputWidth),
+            _CareerCell('${totals.goals}', width: _outputWidth),
+            _CareerCell('${totals.assists}', width: _outputWidth),
+            _CareerCell(
+              totals.averageRating == 0
+                  ? '0'
+                  : totals.averageRating.toStringAsFixed(1),
+              width: _ratingWidth,
+            ),
           ],
         ),
-      );
+      ],
+    );
+  }
 }
 
-class _StatCell extends StatelessWidget {
-  const _StatCell({required this.item});
+class _CareerHistoryRow extends StatelessWidget {
+  const _CareerHistoryRow({
+    required this.game,
+    required this.player,
+    required this.stats,
+    required this.isAlternate,
+  });
 
-  final (String, String) item;
+  final GameState game;
+  final Player player;
+  final PlayerSeasonStats stats;
+  final bool isAlternate;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 9),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                item.$1,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: AppColors.muted,
-                      fontSize: 10,
-                    ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              item.$2,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
-            ),
-          ],
+  Widget build(BuildContext context) {
+    final overall = stats.overall > 0 ? stats.overall : player.ability;
+    final value = stats.marketValue > 0 ? stats.marketValue : player.value;
+    final clubName = game.clubById(stats.clubId)?.name ?? 'Unknown club';
+    return _CareerTableLine(
+      key: Key('playerCareerRow-${stats.season}-${stats.clubId}'),
+      isAlternate: isAlternate,
+      onTap: game.clubById(stats.clubId) == null
+          ? null
+          : () => context.push(AppRoutes.clubDetails(stats.clubId)),
+      cells: [
+        _CareerCell(
+          _compactSeasonLabel(game.seasonLabel(stats.season)),
+          width: _CareerHistoryTable._yearWidth,
+          alignLeft: true,
+          color: AppColors.teal,
+        ),
+        _CareerCell(clubName, expanded: true, alignLeft: true),
+        _CareerCell(
+          '$overall',
+          width: _CareerHistoryTable._overallWidth,
+          color: compactRatingColor(overall),
+        ),
+        _CareerCell(
+          GameFormatters.compactCurrency(value),
+          width: _CareerHistoryTable._valueWidth,
+          color: AppColors.amber,
+        ),
+        _CareerCell(
+          '${stats.appearances}',
+          width: _CareerHistoryTable._outputWidth,
+        ),
+        _CareerCell('${stats.goals}', width: _CareerHistoryTable._outputWidth),
+        _CareerCell(
+          '${stats.assists}',
+          width: _CareerHistoryTable._outputWidth,
+        ),
+        _CareerCell(
+          stats.averageRating == 0
+              ? '0'
+              : stats.averageRating.toStringAsFixed(1),
+          width: _CareerHistoryTable._ratingWidth,
+        ),
+      ],
+    );
+  }
+}
+
+class _CareerTableLine extends StatelessWidget {
+  const _CareerTableLine({
+    required this.cells,
+    this.isHeader = false,
+    this.isAlternate = false,
+    this.emphasized = false,
+    this.onTap,
+    super.key,
+  });
+
+  final List<Widget> cells;
+  final bool isHeader;
+  final bool isAlternate;
+  final bool emphasized;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Container(
+      height: isHeader ? 28 : 43,
+      padding: const EdgeInsets.symmetric(horizontal: 7),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: AppColors.slate)),
+      ),
+      child: Row(children: cells),
+    );
+    return Material(
+      color: emphasized
+          ? AppColors.surfaceHigh
+          : isHeader
+              ? AppColors.midnight
+              : isAlternate
+                  ? AppColors.panelAlt
+                  : AppColors.navy,
+      child: InkWell(onTap: onTap, child: content),
+    );
+  }
+}
+
+class _CareerCell extends StatelessWidget {
+  const _CareerCell(
+    this.value, {
+    this.width,
+    this.expanded = false,
+    this.alignLeft = false,
+    this.color,
+  });
+
+  final String value;
+  final double? width;
+  final bool expanded;
+  final bool alignLeft;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = Align(
+      alignment: alignLeft ? Alignment.centerLeft : Alignment.center,
+      child: Text(
+        value,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        textAlign: alignLeft ? TextAlign.left : TextAlign.center,
+        style: TextStyle(
+          color: color ?? AppColors.paper,
+          fontSize: 9,
+          fontWeight: FontWeight.w800,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+    if (expanded) return Expanded(child: child);
+    return SizedBox(width: width, child: child);
+  }
+}
+
+String _compactSeasonLabel(String label) {
+  final parts = label.split('/');
+  if (parts.length != 2 || parts[1].length < 2) return label;
+  return '${parts[0].substring(parts[0].length - 2)}/${parts[1].substring(parts[1].length - 2)}';
+}
+
+List<PlayerSeasonStats> _careerStatsForPlayer(
+  GameState game,
+  Player player,
+) {
+  final stats = game.statsForPlayer(player.id).toList(growable: true);
+  void addContractSeasons({
+    required String clubId,
+    required int startSeason,
+    required int? endSeason,
+  }) {
+    final club = game.clubById(clubId);
+    if (club == null) return;
+    final lastSeason = endSeason == null
+        ? game.currentSeason
+        : (endSeason - 1).clamp(startSeason, game.currentSeason);
+    for (var season = startSeason; season <= lastSeason; season++) {
+      final alreadyRecorded = stats.any(
+        (item) => item.season == season && item.clubId == clubId,
+      );
+      if (alreadyRecorded) continue;
+      stats.add(
+        PlayerSeasonStats(
+          playerId: player.id,
+          clubId: clubId,
+          leagueId: club.leagueId,
+          season: season,
+          overall: player.ability,
+          marketValue: player.value,
         ),
       );
+    }
+  }
+
+  for (final contract in game.contracts.where(
+    (contract) => contract.playerId == player.id,
+  )) {
+    addContractSeasons(
+      clubId: contract.clubId,
+      startSeason: contract.startSeason,
+      endSeason: contract.endSeason,
+    );
+  }
+  for (final event in game.contractEvents.where(
+    (event) => event.playerId == player.id && event.endSeason != null,
+  )) {
+    addContractSeasons(
+      clubId: event.clubId,
+      startSeason: event.season,
+      endSeason: event.endSeason,
+    );
+  }
+
+  final clubId = player.clubId;
+  final club = clubId == null ? null : game.clubById(clubId);
+  final hasCurrentClubSeason = stats.any(
+    (item) => item.season == game.currentSeason && item.clubId == player.clubId,
+  );
+  if (club != null && !hasCurrentClubSeason && !player.isRetired) {
+    stats.add(
+      PlayerSeasonStats(
+        playerId: player.id,
+        clubId: club.id,
+        leagueId: club.leagueId,
+        season: game.currentSeason,
+        overall: player.ability,
+        marketValue: player.value,
+      ),
+    );
+  }
+  stats.sort((first, second) {
+    final bySeason = second.season.compareTo(first.season);
+    if (bySeason != 0) return bySeason;
+
+    final firstIsCurrent = first.clubId == player.clubId ? 1 : 0;
+    final secondIsCurrent = second.clubId == player.clubId ? 1 : 0;
+    final byCurrentClub = secondIsCurrent.compareTo(firstIsCurrent);
+    if (byCurrentClub != 0) return byCurrentClub;
+
+    int latestArrivalWeek(PlayerSeasonStats item) {
+      var week = 0;
+      for (final transfer in game.transfers) {
+        if (transfer.playerId == player.id &&
+            transfer.toClubId == item.clubId &&
+            transfer.season == item.season &&
+            transfer.week > week) {
+          week = transfer.week;
+        }
+      }
+      return week;
+    }
+
+    final byArrival =
+        latestArrivalWeek(second).compareTo(latestArrivalWeek(first));
+    return byArrival != 0 ? byArrival : first.clubId.compareTo(second.clubId);
+  });
+  return List.unmodifiable(stats);
 }
 
 class _Notice extends StatelessWidget {
@@ -1529,7 +1982,7 @@ class _Notice extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(18),
           child: Text(message,
-              textAlign: TextAlign.center,
+              textAlign: TextAlign.left,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: AppColors.muted,
                   )),

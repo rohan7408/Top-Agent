@@ -21,6 +21,14 @@ class AgencyOffice {
         _ => 8,
       };
 
+  int get scoutingRatingCap => switch (level) {
+        1 => 45,
+        2 => 55,
+        3 => 65,
+        4 => 78,
+        _ => 92,
+      };
+
   double get salaryCommissionRate => switch (level) {
         1 => 0.02,
         2 => 0.04,

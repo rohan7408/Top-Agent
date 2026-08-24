@@ -66,14 +66,22 @@ void main() {
     final result = game.matchResults.first;
     final report = const MatchReportService().build(game, result.id)!;
 
-    expect(report.home.performances, hasLength(11));
-    expect(report.away.performances, hasLength(11));
+    expect(report.home.performances.length, greaterThan(11));
+    expect(report.away.performances.length, greaterThan(11));
+    expect(
+      report.home.performances.where((performance) => performance.started),
+      hasLength(11),
+    );
+    expect(
+      report.away.performances.where((performance) => performance.started),
+      hasLength(11),
+    );
     expect(report.home.goals, result.homeGoals);
     expect(report.away.goals, result.awayGoals);
     expect(report.playerOfTheMatch, isNotNull);
     expect(report.home.averageRating, inInclusiveRange(3, 10));
     expect(report.away.averageRating, inInclusiveRange(3, 10));
-    expect(game.performancesForMatch(result.id), hasLength(22));
+    expect(game.performancesForMatch(result.id).length, greaterThan(22));
     expect(game.matchResultById(result.id), same(result));
   });
 }

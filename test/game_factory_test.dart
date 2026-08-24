@@ -2,12 +2,39 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:football_agent/domain/models/game_state.dart';
 import 'package:football_agent/domain/models/player.dart';
 import 'package:football_agent/domain/models/player_injury.dart';
+import 'package:football_agent/domain/models/player_season_stats.dart';
 import 'package:football_agent/domain/models/player_training_plan.dart';
 import 'package:football_agent/domain/services/football_world_factory.dart';
 import 'package:football_agent/domain/services/game_factory.dart';
 import 'package:football_agent/domain/services/talent_generator.dart';
 
 void main() {
+  test('player career snapshots serialize and tolerate legacy saves', () {
+    const stats = PlayerSeasonStats(
+      playerId: 'player-1',
+      clubId: 'club-1',
+      leagueId: 'league-1',
+      season: 2,
+      overall: 76,
+      marketValue: 30000000,
+      appearances: 30,
+      goals: 22,
+      assists: 8,
+      totalRating: 234,
+    );
+
+    final restored = PlayerSeasonStats.fromJson(stats.toJson());
+    expect(restored.overall, 76);
+    expect(restored.marketValue, 30000000);
+
+    final legacyJson = Map<String, Object?>.from(stats.toJson())
+      ..remove('overall')
+      ..remove('marketValue');
+    final legacy = PlayerSeasonStats.fromJson(legacyJson);
+    expect(legacy.overall, 0);
+    expect(legacy.marketValue, 0);
+  });
+
   test('creates a deterministic initial career state', () {
     final createdAt = DateTime.utc(2026, 8, 23, 12);
     final state = const GameFactory().createNewGame(

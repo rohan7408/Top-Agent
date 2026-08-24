@@ -1,4 +1,5 @@
 import 'player_attributes.dart';
+import 'player_personality.dart';
 
 enum PlayerPosition {
   goalkeeper,
@@ -36,6 +37,9 @@ class Player {
     required this.value,
     required this.salary,
     required this.isRecruited,
+    this.personality = const PlayerPersonality(),
+    this.agentTrust = 100,
+    this.agencyRelationshipWeeks = 0,
     this.clubId,
     this.agentId,
     this.contractEndSeason,
@@ -43,6 +47,13 @@ class Player {
     this.retirementSeason,
     this.fatigue = 0,
     this.consecutiveStarts = 0,
+    this.isTransferListed = false,
+    this.isLoanListed = false,
+    this.loanParentClubId,
+    this.loanEndSeason,
+    this.loanEndWeek,
+    this.loanOriginalSalary,
+    this.scoutedByScoutId,
   });
 
   final String id;
@@ -59,10 +70,22 @@ class Player {
   final double salary;
   final int? contractEndSeason;
   final bool isRecruited;
+  final PlayerPersonality personality;
+  final int agentTrust;
+  final int agencyRelationshipWeeks;
   final bool isRetired;
   final int? retirementSeason;
   final double fatigue;
   final int consecutiveStarts;
+  final bool isTransferListed;
+  final bool isLoanListed;
+  final String? loanParentClubId;
+  final int? loanEndSeason;
+  final int? loanEndWeek;
+  final double? loanOriginalSalary;
+  final String? scoutedByScoutId;
+
+  bool get isOnLoan => loanParentClubId != null;
 
   int get attacking => attributes.attacking;
   int get defending => attributes.defending;
@@ -142,10 +165,25 @@ class Player {
     int? contractEndSeason,
     bool clearContractEndSeason = false,
     bool? isRecruited,
+    PlayerPersonality? personality,
+    int? agentTrust,
+    int? agencyRelationshipWeeks,
     bool? isRetired,
     int? retirementSeason,
     double? fatigue,
     int? consecutiveStarts,
+    bool? isTransferListed,
+    bool? isLoanListed,
+    String? loanParentClubId,
+    bool clearLoanParentClubId = false,
+    int? loanEndSeason,
+    bool clearLoanEndSeason = false,
+    int? loanEndWeek,
+    bool clearLoanEndWeek = false,
+    double? loanOriginalSalary,
+    bool clearLoanOriginalSalary = false,
+    String? scoutedByScoutId,
+    bool clearScoutedByScoutId = false,
   }) {
     return Player(
       id: id,
@@ -164,10 +202,29 @@ class Player {
           ? null
           : contractEndSeason ?? this.contractEndSeason,
       isRecruited: isRecruited ?? this.isRecruited,
+      personality: personality ?? this.personality,
+      agentTrust: (agentTrust ?? this.agentTrust).clamp(0, 300),
+      agencyRelationshipWeeks:
+          (agencyRelationshipWeeks ?? this.agencyRelationshipWeeks)
+              .clamp(0, 9999),
       isRetired: isRetired ?? this.isRetired,
       retirementSeason: retirementSeason ?? this.retirementSeason,
       fatigue: fatigue ?? this.fatigue,
       consecutiveStarts: consecutiveStarts ?? this.consecutiveStarts,
+      isTransferListed: isTransferListed ?? this.isTransferListed,
+      isLoanListed: isLoanListed ?? this.isLoanListed,
+      loanParentClubId: clearLoanParentClubId
+          ? null
+          : loanParentClubId ?? this.loanParentClubId,
+      loanEndSeason:
+          clearLoanEndSeason ? null : loanEndSeason ?? this.loanEndSeason,
+      loanEndWeek: clearLoanEndWeek ? null : loanEndWeek ?? this.loanEndWeek,
+      loanOriginalSalary: clearLoanOriginalSalary
+          ? null
+          : loanOriginalSalary ?? this.loanOriginalSalary,
+      scoutedByScoutId: clearScoutedByScoutId
+          ? null
+          : scoutedByScoutId ?? this.scoutedByScoutId,
     );
   }
 
@@ -187,10 +244,20 @@ class Player {
         'salary': salary,
         'contractEndSeason': contractEndSeason,
         'isRecruited': isRecruited,
+        'personality': personality.toJson(),
+        'agentTrust': agentTrust,
+        'agencyRelationshipWeeks': agencyRelationshipWeeks,
         'isRetired': isRetired,
         'retirementSeason': retirementSeason,
         'fatigue': fatigue,
         'consecutiveStarts': consecutiveStarts,
+        'isTransferListed': isTransferListed,
+        'isLoanListed': isLoanListed,
+        'loanParentClubId': loanParentClubId,
+        'loanEndSeason': loanEndSeason,
+        'loanEndWeek': loanEndWeek,
+        'loanOriginalSalary': loanOriginalSalary,
+        'scoutedByScoutId': scoutedByScoutId,
       };
 
   factory Player.fromJson(Map<String, Object?> json) {
@@ -213,10 +280,25 @@ class Player {
       salary: (json['salary']! as num).toDouble(),
       contractEndSeason: json['contractEndSeason'] as int?,
       isRecruited: json['isRecruited']! as bool,
+      personality: json['personality'] == null
+          ? const PlayerPersonality()
+          : PlayerPersonality.fromJson(
+              (json['personality']! as Map).cast<String, Object?>(),
+            ),
+      agentTrust: ((json['agentTrust'] as int?) ?? 100).clamp(0, 300),
+      agencyRelationshipWeeks:
+          ((json['agencyRelationshipWeeks'] as int?) ?? 0).clamp(0, 9999),
       isRetired: (json['isRetired'] as bool?) ?? false,
       retirementSeason: json['retirementSeason'] as int?,
       fatigue: ((json['fatigue'] as num?) ?? 0).toDouble(),
       consecutiveStarts: (json['consecutiveStarts'] as int?) ?? 0,
+      isTransferListed: (json['isTransferListed'] as bool?) ?? false,
+      isLoanListed: (json['isLoanListed'] as bool?) ?? false,
+      loanParentClubId: json['loanParentClubId'] as String?,
+      loanEndSeason: json['loanEndSeason'] as int?,
+      loanEndWeek: json['loanEndWeek'] as int?,
+      loanOriginalSalary: (json['loanOriginalSalary'] as num?)?.toDouble(),
+      scoutedByScoutId: json['scoutedByScoutId'] as String?,
     );
   }
 }

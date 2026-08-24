@@ -15,7 +15,7 @@ void main() {
     final early = const TrainingGroundEngine().processWeek(
       game,
       nextSeason: 1,
-      nextWeek: 12,
+      nextWeek: 18,
       seed: 7,
     );
     expect(early.talentsDeveloped, 0);
@@ -23,15 +23,15 @@ void main() {
     final intake = const TrainingGroundEngine().processWeek(
       game,
       nextSeason: 1,
-      nextWeek: 13,
+      nextWeek: 19,
       seed: 7,
     );
     expect(intake.talentsDeveloped, 1);
     expect(intake.state.players, hasLength(initialCount + 1));
     final prospect = intake.state.players.last;
-    expect(prospect.ability, inInclusiveRange(32, 48));
-    expect(prospect.age, inInclusiveRange(16, 20));
+    expect(prospect.ability, inInclusiveRange(28, 40));
+    expect(prospect.age, inInclusiveRange(16, 19));
     expect(intake.state.hiredScouts, isEmpty);
-    expect(intake.state.trainingGround.lastIntakeAbsoluteWeek, 13);
+    expect(intake.state.trainingGround.lastIntakeAbsoluteWeek, 19);
   });
 }

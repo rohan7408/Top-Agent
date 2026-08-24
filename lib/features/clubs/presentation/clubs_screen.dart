@@ -7,6 +7,8 @@ import '../../../app/theme/app_colors.dart';
 import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
 import '../../../core/widgets/compact_data_table.dart';
+import '../../../core/widgets/compact_page_chrome.dart';
+import '../../../core/widgets/section_placeholder.dart';
 import '../../../domain/models/club.dart';
 import '../../../domain/models/club_season_record.dart';
 import '../../../domain/models/league_fixture.dart';
@@ -20,7 +22,13 @@ class ClubsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final game = ref.watch(gameControllerProvider);
     if (game == null) {
-      return const Scaffold(body: Center(child: Text('No active career.')));
+      return const Scaffold(
+        body: SectionPlaceholder(
+          icon: Icons.public_off_outlined,
+          title: 'No active career',
+          message: 'Start or continue a career to view the football world.',
+        ),
+      );
     }
 
     final leagueName = game.leagues.firstOrNull?.name ?? 'Football world';
@@ -30,16 +38,9 @@ class ClubsScreen extends ConsumerWidget {
       length: 5,
       child: Scaffold(
         appBar: AppBar(
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('FOOTBALL WORLD',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: AppColors.teal,
-                        fontSize: 8,
-                      )),
-              Text(leagueName),
-            ],
+          title: CompactPageTitle(
+            title: leagueName,
+            eyebrow: 'Football world',
           ),
           actions: [
             Padding(
@@ -54,17 +55,9 @@ class ClubsScreen extends ConsumerWidget {
               ),
             ),
           ],
-          bottom: const TabBar(
-            isScrollable: false,
-            labelPadding: EdgeInsets.zero,
-            labelStyle: TextStyle(fontSize: 10, fontWeight: FontWeight.w800),
-            tabs: [
-              Tab(text: 'Table'),
-              Tab(text: 'Clubs'),
-              Tab(text: 'Fixtures'),
-              Tab(text: 'Results'),
-              Tab(text: 'Leaders'),
-            ],
+          bottom: const CompactTabBar(
+            labels: ['Table', 'Clubs', 'Fixtures', 'Results', 'Leaders'],
+            fontSize: 9,
           ),
         ),
         body: TabBarView(
@@ -103,6 +96,19 @@ class ClubsScreen extends ConsumerWidget {
               leagueId: game.leagues.firstOrNull?.id ?? '',
             ),
           ],
+        ),
+        floatingActionButton: FloatingActionButton.small(
+          key: const Key('leagueHistoryButton'),
+          heroTag: 'league-history',
+          tooltip: 'Past league winners and leaders',
+          backgroundColor: AppColors.amber,
+          foregroundColor: AppColors.ink,
+          onPressed: game.leagues.isEmpty
+              ? null
+              : () => context.push(
+                    AppRoutes.leagueHistory(game.leagues.first.id),
+                  ),
+          child: const Icon(Icons.history),
         ),
       ),
     );
@@ -579,7 +585,7 @@ class _ResultRow extends StatelessWidget {
           key: Key('matchResult-${result.id}'),
           onTap: () => context.push(AppRoutes.matchDetails(result.id)),
           child: Container(
-            height: 42,
+            height: 44,
             padding: const EdgeInsets.symmetric(horizontal: 10),
             decoration: const BoxDecoration(
               color: AppColors.navy,
@@ -596,7 +602,7 @@ class _ResultRow extends StatelessWidget {
                 Container(
                   margin: const EdgeInsets.symmetric(horizontal: 9),
                   width: 48,
-                  height: 42,
+                  height: 44,
                   alignment: Alignment.center,
                   color: AppColors.teal.withValues(alpha: 0.14),
                   child: Text('${result.homeGoals} – ${result.awayGoals}',
@@ -623,18 +629,11 @@ class _EmptyState extends StatelessWidget {
   final String message;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: 72),
-        child: Column(
-          children: [
-            Icon(icon, size: 36, color: AppColors.muted),
-            const SizedBox(height: 12),
-            Text(message,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: AppColors.muted,
-                    )),
-          ],
-        ),
+  Widget build(BuildContext context) => SectionPlaceholder(
+        icon: icon,
+        title: icon == Icons.event_busy_outlined
+            ? 'No remaining fixtures'
+            : 'No results yet',
+        message: message,
       );
 }

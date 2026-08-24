@@ -1,3 +1,5 @@
+enum TransferMoveType { permanent, loan, freeAgent }
+
 class TransferRecord {
   const TransferRecord({
     required this.id,
@@ -7,6 +9,8 @@ class TransferRecord {
     required this.fee,
     required this.season,
     required this.week,
+    this.type = TransferMoveType.permanent,
+    this.agentFee = 0,
   });
 
   final String id;
@@ -16,6 +20,10 @@ class TransferRecord {
   final double fee;
   final int season;
   final int week;
+  final TransferMoveType type;
+  final double agentFee;
+
+  double get totalDealCost => fee + agentFee;
 
   Map<String, Object> toJson() => {
         'id': id,
@@ -25,6 +33,8 @@ class TransferRecord {
         'fee': fee,
         'season': season,
         'week': week,
+        'type': type.name,
+        'agentFee': agentFee,
       };
 
   factory TransferRecord.fromJson(Map<String, Object?> json) => TransferRecord(
@@ -35,5 +45,9 @@ class TransferRecord {
         fee: (json['fee']! as num).toDouble(),
         season: json['season']! as int,
         week: json['week']! as int,
+        type: TransferMoveType.values.byName(
+          (json['type'] as String?) ?? TransferMoveType.permanent.name,
+        ),
+        agentFee: ((json['agentFee'] as num?) ?? 0).toDouble(),
       );
 }

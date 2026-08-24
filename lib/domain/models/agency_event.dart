@@ -1,9 +1,24 @@
-enum AgencyEventCategory { commercial, discipline, career, welfare, agency }
+enum AgencyEventCategory {
+  commercial,
+  media,
+  discipline,
+  career,
+  welfare,
+  agency,
+  finance,
+}
 
 enum AgencyEventType {
   localAdvertising,
   bootSponsorship,
   paidAppearance,
+  televisionInterview,
+  charityAppearance,
+  socialMediaControversy,
+  conflictingSponsors,
+  documentaryOffer,
+  imageRightsDispute,
+  agencySponsorship,
   propertyDamage,
   missedTraining,
   nightclubIncident,
@@ -13,14 +28,30 @@ enum AgencyEventType {
   familyEmergency,
   scoutTravelRequest,
   officeRepair,
+  unexpectedTaxBill,
+  legalComplaint,
+  officeLeaseRenewal,
+  dataBreach,
+  insuranceRenewal,
+  investorApproach,
+  reputationConsultant,
+  cashFlowCrisis,
 }
 
 extension AgencyEventTypeInfo on AgencyEventType {
   AgencyEventCategory get category => switch (this) {
         AgencyEventType.localAdvertising ||
         AgencyEventType.bootSponsorship ||
-        AgencyEventType.paidAppearance =>
+        AgencyEventType.paidAppearance ||
+        AgencyEventType.conflictingSponsors ||
+        AgencyEventType.imageRightsDispute ||
+        AgencyEventType.agencySponsorship =>
           AgencyEventCategory.commercial,
+        AgencyEventType.televisionInterview ||
+        AgencyEventType.charityAppearance ||
+        AgencyEventType.socialMediaControversy ||
+        AgencyEventType.documentaryOffer =>
+          AgencyEventCategory.media,
         AgencyEventType.propertyDamage ||
         AgencyEventType.missedTraining ||
         AgencyEventType.nightclubIncident =>
@@ -32,8 +63,17 @@ extension AgencyEventTypeInfo on AgencyEventType {
         AgencyEventType.familyEmergency =>
           AgencyEventCategory.welfare,
         AgencyEventType.scoutTravelRequest ||
-        AgencyEventType.officeRepair =>
+        AgencyEventType.officeRepair ||
+        AgencyEventType.legalComplaint ||
+        AgencyEventType.dataBreach ||
+        AgencyEventType.reputationConsultant =>
           AgencyEventCategory.agency,
+        AgencyEventType.unexpectedTaxBill ||
+        AgencyEventType.officeLeaseRenewal ||
+        AgencyEventType.insuranceRenewal ||
+        AgencyEventType.investorApproach ||
+        AgencyEventType.cashFlowCrisis =>
+          AgencyEventCategory.finance,
       };
 }
 
@@ -50,11 +90,15 @@ class AgencyEventChoice {
     this.moneyImpact = 0,
     this.reputationImpact = 0,
     this.fatigueImpact = 0,
+    this.trustImpact = 0,
+    this.clubRelationshipImpact = 0,
     this.successChance = 1,
     this.failureMessage,
     this.failureMoneyImpact = 0,
     this.failureReputationImpact = 0,
     this.failureFatigueImpact = 0,
+    this.failureTrustImpact = 0,
+    this.failureClubRelationshipImpact = 0,
   });
 
   final String id;
@@ -64,11 +108,15 @@ class AgencyEventChoice {
   final double moneyImpact;
   final int reputationImpact;
   final double fatigueImpact;
+  final int trustImpact;
+  final int clubRelationshipImpact;
   final double successChance;
   final String? failureMessage;
   final double failureMoneyImpact;
   final int failureReputationImpact;
   final double failureFatigueImpact;
+  final int failureTrustImpact;
+  final int failureClubRelationshipImpact;
 
   bool get isUncertain => successChance < 1;
 
@@ -79,6 +127,34 @@ class AgencyEventChoice {
     return 'High risk';
   }
 
+  AgencyEventChoice copyWith({
+    double? successChance,
+    int? trustImpact,
+    int? clubRelationshipImpact,
+    int? failureTrustImpact,
+    int? failureClubRelationshipImpact,
+  }) =>
+      AgencyEventChoice(
+        id: id,
+        label: label,
+        detail: detail,
+        successMessage: successMessage,
+        moneyImpact: moneyImpact,
+        reputationImpact: reputationImpact,
+        fatigueImpact: fatigueImpact,
+        trustImpact: trustImpact ?? this.trustImpact,
+        clubRelationshipImpact:
+            clubRelationshipImpact ?? this.clubRelationshipImpact,
+        successChance: successChance ?? this.successChance,
+        failureMessage: failureMessage,
+        failureMoneyImpact: failureMoneyImpact,
+        failureReputationImpact: failureReputationImpact,
+        failureFatigueImpact: failureFatigueImpact,
+        failureTrustImpact: failureTrustImpact ?? this.failureTrustImpact,
+        failureClubRelationshipImpact:
+            failureClubRelationshipImpact ?? this.failureClubRelationshipImpact,
+      );
+
   Map<String, Object?> toJson() => {
         'id': id,
         'label': label,
@@ -87,11 +163,15 @@ class AgencyEventChoice {
         'moneyImpact': moneyImpact,
         'reputationImpact': reputationImpact,
         'fatigueImpact': fatigueImpact,
+        'trustImpact': trustImpact,
+        'clubRelationshipImpact': clubRelationshipImpact,
         'successChance': successChance,
         'failureMessage': failureMessage,
         'failureMoneyImpact': failureMoneyImpact,
         'failureReputationImpact': failureReputationImpact,
         'failureFatigueImpact': failureFatigueImpact,
+        'failureTrustImpact': failureTrustImpact,
+        'failureClubRelationshipImpact': failureClubRelationshipImpact,
       };
 
   factory AgencyEventChoice.fromJson(Map<String, Object?> json) =>
@@ -103,6 +183,8 @@ class AgencyEventChoice {
         moneyImpact: ((json['moneyImpact'] as num?) ?? 0).toDouble(),
         reputationImpact: (json['reputationImpact'] as int?) ?? 0,
         fatigueImpact: ((json['fatigueImpact'] as num?) ?? 0).toDouble(),
+        trustImpact: (json['trustImpact'] as int?) ?? 0,
+        clubRelationshipImpact: (json['clubRelationshipImpact'] as int?) ?? 0,
         successChance: ((json['successChance'] as num?) ?? 1).toDouble(),
         failureMessage: json['failureMessage'] as String?,
         failureMoneyImpact:
@@ -110,6 +192,9 @@ class AgencyEventChoice {
         failureReputationImpact: (json['failureReputationImpact'] as int?) ?? 0,
         failureFatigueImpact:
             ((json['failureFatigueImpact'] as num?) ?? 0).toDouble(),
+        failureTrustImpact: (json['failureTrustImpact'] as int?) ?? 0,
+        failureClubRelationshipImpact:
+            (json['failureClubRelationshipImpact'] as int?) ?? 0,
       );
 }
 
@@ -134,6 +219,8 @@ class AgencyEvent {
     this.resolvedMoneyImpact = 0,
     this.resolvedReputationImpact = 0,
     this.resolvedFatigueImpact = 0,
+    this.resolvedTrustImpact = 0,
+    this.resolvedClubRelationshipImpact = 0,
     this.resolvedSucceeded,
   });
 
@@ -156,6 +243,8 @@ class AgencyEvent {
   final double resolvedMoneyImpact;
   final int resolvedReputationImpact;
   final double resolvedFatigueImpact;
+  final int resolvedTrustImpact;
+  final int resolvedClubRelationshipImpact;
   final bool? resolvedSucceeded;
 
   AgencyEventCategory get category => type.category;
@@ -191,7 +280,10 @@ class AgencyEvent {
     double? resolvedMoneyImpact,
     int? resolvedReputationImpact,
     double? resolvedFatigueImpact,
+    int? resolvedTrustImpact,
+    int? resolvedClubRelationshipImpact,
     bool? resolvedSucceeded,
+    List<AgencyEventChoice>? choices,
   }) =>
       AgencyEvent(
         id: id,
@@ -201,7 +293,7 @@ class AgencyEvent {
         season: season,
         week: week,
         expiresAbsoluteWeek: expiresAbsoluteWeek,
-        choices: choices,
+        choices: choices ?? this.choices,
         playerId: playerId,
         clubId: clubId,
         scoutId: scoutId,
@@ -215,6 +307,9 @@ class AgencyEvent {
             resolvedReputationImpact ?? this.resolvedReputationImpact,
         resolvedFatigueImpact:
             resolvedFatigueImpact ?? this.resolvedFatigueImpact,
+        resolvedTrustImpact: resolvedTrustImpact ?? this.resolvedTrustImpact,
+        resolvedClubRelationshipImpact: resolvedClubRelationshipImpact ??
+            this.resolvedClubRelationshipImpact,
         resolvedSucceeded: resolvedSucceeded ?? this.resolvedSucceeded,
       );
 
@@ -238,6 +333,8 @@ class AgencyEvent {
         'resolvedMoneyImpact': resolvedMoneyImpact,
         'resolvedReputationImpact': resolvedReputationImpact,
         'resolvedFatigueImpact': resolvedFatigueImpact,
+        'resolvedTrustImpact': resolvedTrustImpact,
+        'resolvedClubRelationshipImpact': resolvedClubRelationshipImpact,
         'resolvedSucceeded': resolvedSucceeded,
       };
 
@@ -270,6 +367,9 @@ class AgencyEvent {
             (json['resolvedReputationImpact'] as int?) ?? 0,
         resolvedFatigueImpact:
             ((json['resolvedFatigueImpact'] as num?) ?? 0).toDouble(),
+        resolvedTrustImpact: (json['resolvedTrustImpact'] as int?) ?? 0,
+        resolvedClubRelationshipImpact:
+            (json['resolvedClubRelationshipImpact'] as int?) ?? 0,
         resolvedSucceeded: json['resolvedSucceeded'] as bool?,
       );
 }

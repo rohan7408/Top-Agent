@@ -2,12 +2,21 @@ import 'dart:math';
 
 import '../../domain/models/contract.dart';
 import '../../domain/models/contract_event.dart';
+import '../../domain/models/club.dart';
 import '../../domain/models/game_email.dart';
 import '../../domain/models/game_state.dart';
+import '../../domain/models/player.dart';
 import '../../domain/models/transfer_record.dart';
 import '../../domain/services/game_balance.dart';
 import '../../domain/services/squad_analysis_service.dart';
 import '../../domain/services/season_calendar.dart';
+import '../../domain/services/transfer_eligibility.dart';
+import '../../domain/services/player_move_adjustment.dart';
+import '../../domain/services/transfer_valuation_service.dart';
+import '../../domain/services/club_roster_accounting.dart';
+import '../../domain/services/club_transfer_strategy.dart';
+import '../../domain/services/club_financial_policy.dart';
+import '../../domain/services/player_transfer_decision.dart';
 
 class ClubManagementResult {
   const ClubManagementResult({
@@ -26,11 +35,25 @@ class ClubManagementEngine {
     this.squadAnalysisService = const SquadAnalysisService(),
     this.balance = const GameBalance(),
     this.seasonCalendar = const SeasonCalendar(),
+    this.transferEligibility = const TransferEligibility(),
+    this.playerMoveAdjustment = const PlayerMoveAdjustment(),
+    this.transferValuation = const TransferValuationService(),
+    this.clubRosterAccounting = const ClubRosterAccounting(),
+    this.transferStrategy = const ClubTransferStrategyService(),
+    this.financialPolicy = const ClubFinancialPolicyService(),
+    this.playerDecision = const PlayerTransferDecisionService(),
   });
 
   final SquadAnalysisService squadAnalysisService;
   final GameBalance balance;
   final SeasonCalendar seasonCalendar;
+  final TransferEligibility transferEligibility;
+  final PlayerMoveAdjustment playerMoveAdjustment;
+  final TransferValuationService transferValuation;
+  final ClubRosterAccounting clubRosterAccounting;
+  final ClubTransferStrategyService transferStrategy;
+  final ClubFinancialPolicyService financialPolicy;
+  final PlayerTransferDecisionService playerDecision;
 
   ClubManagementResult processWeek(GameState game, {required int seed}) {
     var working = game.copyWith(
@@ -53,10 +76,29 @@ class ClubManagementEngine {
 
     final random = Random(seed ^ 0x4C5542);
     var transfersCompleted = 0;
-    final buyers = [...working.clubs]..shuffle(random);
+    final buyers = working.clubs
+        .map((club) {
+          final strategy = transferStrategy.forClub(working, club);
+          final policy = financialPolicy.forClub(
+            game: working,
+            club: club,
+            strategy: strategy,
+          );
+          return _BuyerTurn(
+            clubId: club.id,
+            priority: strategy.recruitmentUrgency +
+                random.nextDouble() * 0.30 -
+                strategy.recentArrivals * 0.07,
+            canRecruit:
+                strategy.canRecruit && policy.availableTransferFunds > 0,
+          );
+        })
+        .where((turn) => turn.canRecruit)
+        .toList(growable: true)
+      ..sort((first, second) => second.priority.compareTo(first.priority));
     for (final buyer in buyers) {
       if (transfersCompleted >= 2) break;
-      final transfer = _attemptTransfer(working, buyer.id, random);
+      final transfer = _attemptTransfer(working, buyer.clubId, random);
       if (transfer == null) continue;
       working = transfer;
       transfersCompleted++;
@@ -80,9 +122,20 @@ class ClubManagementEngine {
     final buyerIndex = game.clubs.indexWhere((club) => club.id == buyerId);
     if (buyerIndex < 0) return null;
     final buyer = game.clubs[buyerIndex];
+    final strategy = transferStrategy.forClub(game, buyer);
+    if (!strategy.canRecruit) return null;
+    final policy = financialPolicy.forClub(
+      game: game,
+      club: buyer,
+      strategy: strategy,
+    );
+    if (policy.availableTransferFunds <= 0 || policy.maxOfferWage <= 0) {
+      return null;
+    }
     final need =
         squadAnalysisService.prioritiesForClub(buyer, game.players).first;
     final buyerSquad = game.playersForClub(buyer.id);
+    if (buyerSquad.length >= 26) return null;
     final buyerAverage = buyerSquad.isEmpty
         ? 50.0
         : buyerSquad.fold<int>(0, (sum, player) => sum + player.ability) /
@@ -93,74 +146,130 @@ class ClubManagementEngine {
       if (sellerId == null || sellerId == buyer.id || player.agentId != null) {
         return false;
       }
-      if (player.position != need.position || player.age < 21) return false;
-      final sellerSquad = game.playersForClub(sellerId);
-      final roleCount =
-          sellerSquad.where((item) => item.position == player.position).length;
-      final minimumAfterSale =
-          max(1, SquadAnalysisService.targetDepth[player.position]! - 1);
-      if (roleCount <= minimumAfterSale || sellerSquad.length <= 16) {
+      if (player.position != need.position || player.age < 18) return false;
+      if (player.isLoanListed || player.isOnLoan) return false;
+      if (!transferEligibility.canTransferPermanently(game, player)) {
         return false;
       }
-      return player.ability >= buyerAverage - 4;
+      final sellerSquad = game.playersForClub(sellerId);
+      if (sellerSquad.length <= 14) return false;
+      final abilityFloor = buyerAverage - 5 + strategy.ambition * 5.5;
+      final canStrengthen = player.ability >= abilityFloor ||
+          (player.age <= 23 && player.potential >= buyerAverage + 3);
+      final seller = game.clubById(sellerId);
+      if (seller == null) return false;
+      final sellerStrategy = transferStrategy.forClub(game, seller);
+      final valuation = transferValuation.valueForSeller(
+        game,
+        player,
+        sellerAmbition: sellerStrategy.ambition,
+      );
+      final affordable =
+          policy.availableTransferFunds >= valuation.askingPrice * 0.55;
+      return canStrengthen && affordable;
     }).toList(growable: true)
       ..sort((first, second) {
-        final firstScore = first.ability * 1000000 / max(1, first.value);
-        final secondScore = second.ability * 1000000 / max(1, second.value);
+        final firstScore = _transferTargetScore(
+          game: game,
+          player: first,
+          buyer: buyer,
+          strategy: strategy,
+        );
+        final secondScore = _transferTargetScore(
+          game: game,
+          player: second,
+          buyer: buyer,
+          strategy: strategy,
+        );
         return secondScore.compareTo(firstScore);
       });
 
     if (candidates.isEmpty) return null;
-    final shortlist = candidates.take(min(8, candidates.length)).toList();
-    final player = shortlist[random.nextInt(shortlist.length)];
+    final shortlist = candidates.take(min(4, candidates.length)).toList();
+    final biasedIndex =
+        (random.nextDouble() * random.nextDouble() * shortlist.length).floor();
+    final player = shortlist[biasedIndex.clamp(0, shortlist.length - 1)];
     final sellerIndex =
         game.clubs.indexWhere((club) => club.id == player.clubId);
     if (sellerIndex < 0) return null;
     final seller = game.clubs[sellerIndex];
     final buyerManager = game.managerForClub(buyer.id);
     final sellerManager = game.managerForClub(seller.id);
-    final negotiationDelta = ((sellerManager?.transferNegotiation ?? 60) -
-            (buyerManager?.transferNegotiation ?? 60)) /
-        500;
-    final fee = balance.transferFee(
-      marketValue: player.value,
-      negotiationDelta: negotiationDelta,
-      randomFactor: random.nextDouble(),
+    final buyerNegotiation = buyerManager?.transferNegotiation ?? 60;
+    final sellerNegotiation = sellerManager?.transferNegotiation ?? 60;
+    final sellerStrategy = transferStrategy.forClub(game, seller);
+    final valuation = transferValuation.valueForSeller(
+      game,
+      player,
+      sellerAmbition: sellerStrategy.ambition,
     );
-    if (fee > buyer.budget || fee > buyer.balance) return null;
+    final bidMultiplier = (0.82 +
+            random.nextDouble() * 0.22 +
+            strategy.ambition * 0.16 +
+            (buyerNegotiation - sellerNegotiation) / 450)
+        .clamp(0.76, 1.28);
+    final fee = (valuation.askingPrice * bidMultiplier).roundToDouble();
+    if (fee > policy.availableTransferFunds) return null;
+    final acceptanceChance = transferValuation.saleProbability(
+      valuation: valuation,
+      offer: fee,
+      isTransferListed: player.isTransferListed,
+      negotiationEdge: (buyerNegotiation - sellerNegotiation) / 800,
+    );
+    if (random.nextDouble() > acceptanceChance) return null;
 
-    final salary = max(
-      player.salary * (1.08 + random.nextDouble() * 0.18),
-      balance.weeklyWage(
-        ability: player.ability,
-        potential: player.potential,
-        age: player.age,
-        marketMultiplier: 1.02,
-      ),
-    ).roundToDouble();
+    final marketWage = balance.weeklyWage(
+      ability: player.ability,
+      potential: player.potential,
+      age: player.age,
+      marketMultiplier: 1.02,
+    );
+    final desiredSalary = max(
+      player.salary *
+          (1.06 + strategy.ambition * 0.18 + random.nextDouble() * 0.10),
+      marketWage * (0.94 + strategy.ambition * 0.16 + strategy.prestige * 0.06),
+    );
+    final salary = min(desiredSalary, policy.maxOfferWage).roundToDouble();
+    if (!policy.canFund(club: buyer, fee: fee, weeklyWage: salary)) {
+      return null;
+    }
+    final playerAcceptance = playerDecision.acceptanceProbability(
+      game: game,
+      player: player,
+      seller: seller,
+      buyer: buyer,
+      buyerStrategy: strategy,
+      weeklySalary: salary,
+    );
+    if (random.nextDouble() > playerAcceptance) return null;
     final contractLength = 3 + random.nextInt(3);
     final players = [...game.players];
     final playerIndex = players.indexWhere((item) => item.id == player.id);
-    players[playerIndex] = player.copyWith(
+    final adjustedPlayer =
+        playerMoveAdjustment.applyRapidMoveRisk(game, player);
+    players[playerIndex] = adjustedPlayer.copyWith(
       clubId: buyer.id,
+      value: fee,
       salary: salary,
       contractEndSeason: game.currentSeason + contractLength,
+      isTransferListed: false,
+      isLoanListed: false,
     );
 
     final clubs = [...game.clubs];
-    clubs[sellerIndex] = seller.copyWith(
-      squadValue: max(0, seller.squadValue - player.value).toDouble(),
-      totalSalary: max(0, seller.totalSalary - player.salary).toDouble(),
-      budget: seller.budget + fee,
-      balance: seller.balance + fee,
-      playerIds: seller.playerIds.where((id) => id != player.id).toList(),
+    clubs[sellerIndex] = clubRosterAccounting.synchronize(
+      seller.copyWith(
+        budget: seller.budget + fee,
+        balance: seller.balance + fee,
+      ),
+      players,
     );
-    clubs[buyerIndex] = buyer.copyWith(
-      squadValue: buyer.squadValue + player.value,
-      totalSalary: buyer.totalSalary + salary,
-      budget: buyer.budget - fee,
-      balance: buyer.balance - fee,
-      playerIds: [...buyer.playerIds, player.id],
+    clubs[buyerIndex] = clubRosterAccounting.synchronize(
+      buyer.copyWith(
+        budget: buyer.budget - fee,
+        balance: buyer.balance - fee,
+      ),
+      players,
     );
 
     final transferId =
@@ -174,6 +283,7 @@ class ClubManagementEngine {
       contractLength: contractLength,
       startSeason: game.currentSeason,
       endSeason: game.currentSeason + contractLength,
+      startWeek: game.currentWeek,
     );
     final contractEvent = ContractEvent(
       id: 'contract-event-$transferId',
@@ -221,6 +331,46 @@ class ClubManagementEngine {
             ]
           : game.emails,
     );
+  }
+
+  double _transferTargetScore({
+    required GameState game,
+    required Player player,
+    required Club buyer,
+    required ClubTransferStrategy strategy,
+  }) {
+    final contract = game.contracts
+        .where((contract) => contract.playerId == player.id)
+        .lastOrNull;
+    final listedBonus = player.isTransferListed ? 35.0 : 0.0;
+    final fit = transferValuation.buyerFit(
+      game: game,
+      club: buyer,
+      player: player,
+    );
+    final ageProfile = player.age <= 23
+        ? 8.0
+        : player.age >= 31
+            ? -8.0
+            : 3.0;
+    final valueEfficiency = player.ability * 1000000 / max(1, player.value);
+    final expiringBonus =
+        contract != null && contract.endSeason <= game.currentSeason + 1
+            ? 7.0
+            : 0.0;
+    final immediateQuality = (player.ability - strategy.squadAverage) *
+        (0.45 + strategy.ambition * 0.80);
+    final futureValue = max(0, player.potential - player.ability) *
+        (0.22 + (1 - strategy.ambition) * 0.24);
+    final arrivalPenalty = strategy.recentArrivals * 7.0;
+    return listedBonus +
+        fit +
+        ageProfile +
+        valueEfficiency +
+        expiringBonus +
+        immediateQuality +
+        futureValue -
+        arrivalPenalty;
   }
 
   ({GameState state, int count}) _renewExpiringContracts(
@@ -284,6 +434,7 @@ class ClubManagementEngine {
           contractLength: length,
           startSeason: game.currentSeason,
           endSeason: game.currentSeason + length,
+          startWeek: game.currentWeek,
         ),
       ];
       contractEvents.add(
@@ -335,4 +486,16 @@ class ClubManagementEngine {
     if (amount >= 1000) return '£${(amount / 1000).toStringAsFixed(0)}k';
     return '£${amount.toStringAsFixed(0)}';
   }
+}
+
+class _BuyerTurn {
+  const _BuyerTurn({
+    required this.clubId,
+    required this.priority,
+    required this.canRecruit,
+  });
+
+  final String clubId;
+  final double priority;
+  final bool canRecruit;
 }

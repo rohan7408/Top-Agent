@@ -9,9 +9,9 @@ class TrainingGround {
   final int level;
   final int lastIntakeAbsoluteWeek;
 
-  int get minimumAbility => const [32, 38, 44, 50, 56][level - 1];
-  int get maximumAbility => const [48, 55, 62, 70, 78][level - 1];
-  int get intakeIntervalWeeks => const [12, 10, 8, 6, 4][level - 1];
+  int get minimumAbility => const [28, 34, 40, 48, 56][level - 1];
+  int get maximumAbility => const [40, 48, 57, 67, 78][level - 1];
+  int get intakeIntervalWeeks => const [18, 15, 12, 9, 6][level - 1];
   bool get canUpgrade => level < maximumLevel;
 
   double get nextUpgradeMoneyCost => canUpgrade

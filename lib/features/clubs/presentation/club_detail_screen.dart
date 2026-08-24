@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../app/router/app_router.dart';
@@ -7,8 +8,9 @@ import '../../../app/theme/app_colors.dart';
 import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
 import '../../../core/widgets/compact_data_table.dart';
+import '../../../core/widgets/compact_page_chrome.dart';
+import '../../../core/widgets/section_placeholder.dart';
 import '../../../domain/models/club.dart';
-import '../../../domain/models/club_manager.dart';
 import '../../../domain/models/club_season_record.dart';
 import '../../../domain/models/contract_event.dart';
 import '../../../domain/models/league_fixture.dart';
@@ -16,7 +18,7 @@ import '../../../domain/models/match_result.dart';
 import '../../../domain/models/player.dart';
 import '../../../domain/models/player_season_stats.dart';
 import '../../../domain/models/transfer_record.dart';
-import '../../../domain/services/squad_analysis_service.dart';
+import '../../../domain/services/club_history_service.dart';
 
 class ClubDetailScreen extends ConsumerWidget {
   const ClubDetailScreen({required this.clubId, super.key});
@@ -29,7 +31,11 @@ class ClubDetailScreen extends ConsumerWidget {
     final club = game?.clubById(clubId);
     if (game == null || club == null) {
       return const Scaffold(
-        body: Center(child: Text('Club not found.')),
+        body: SectionPlaceholder(
+          icon: Icons.domain_disabled_outlined,
+          title: 'Club not found',
+          message: 'This club is no longer available in the current career.',
+        ),
       );
     }
 
@@ -42,7 +48,6 @@ class ClubDetailScreen extends ConsumerWidget {
       });
     final leagueName = game.leagueById(club.leagueId)?.name ?? 'Unknown league';
     final record = game.currentRecordForClub(club.id);
-    final recentResults = game.resultsForClub(club.id).take(5).toList();
     final clubNames = {for (final club in game.clubs) club.id: club.name};
     final clubStats = game.playerSeasonStats
         .where((stats) =>
@@ -50,10 +55,9 @@ class ClubDetailScreen extends ConsumerWidget {
         .toList();
     final tableIndex =
         game.currentStandings.indexWhere((item) => item.clubId == club.id);
-    final manager = game.managerForClub(club.id);
-    final transferPriority = const SquadAnalysisService()
-        .prioritiesForClub(club, game.players)
-        .first;
+    final historyService = const ClubHistoryService();
+    final leagueFinishes = historyService.leagueFinishes(game, club.id);
+    final honours = historyService.honours(game, club.id);
     final playerNames = {
       for (final player in game.players) player.id: player.name
     };
@@ -75,68 +79,37 @@ class ClubDetailScreen extends ConsumerWidget {
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 50,
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                club.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w900,
-                    ),
-              ),
-              Text(
-                '$leagueName · ${tableIndex < 0 ? 'UNRANKED' : '#${tableIndex + 1}'}',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: AppColors.teal,
-                      fontSize: 7,
-                    ),
-              ),
-            ],
+          title: CompactPageTitle(
+            title: club.name,
+            eyebrow:
+                '$leagueName · ${tableIndex < 0 ? 'Unranked' : '#${tableIndex + 1}'}',
           ),
-          bottom: const TabBar(
-            labelPadding: EdgeInsets.zero,
-            labelStyle: TextStyle(fontSize: 9, fontWeight: FontWeight.w800),
-            tabs: [
-              Tab(text: 'Overview'),
-              Tab(text: 'Squad'),
-              Tab(text: 'Stats'),
-              Tab(text: 'Finance'),
-              Tab(text: 'Schedule'),
-            ],
+          bottom: const CompactTabBar(
+            labels: ['Overview', 'Squad', 'Stats', 'Finance', 'Schedule'],
+            fontSize: 9,
           ),
         ),
         body: Column(
           children: [
             _ClubHeader(
               club: club,
-              playerCount: players.length,
-              points: record?.points ?? 0,
             ),
             Expanded(
               child: TabBarView(
                 children: [
                   _OverviewTab(
-                    club: club,
-                    players: players,
-                    leagueName: leagueName,
-                    record: record,
-                    recentResults: recentResults,
-                    clubNames: clubNames,
-                    managerName: manager?.name ?? 'Vacant',
-                    managerProfile: manager == null
-                        ? '—'
-                        : '${manager.tacticalStyle.label} · ${manager.ability}',
-                    managerRotation:
-                        manager == null ? '—' : '${manager.rotation}/99',
-                    transferPriority:
-                        '${transferPriority.position.shortLabel} · ${transferPriority.playerCount} players',
+                    leagueSize:
+                        game.leagueById(club.leagueId)?.clubIds.length ?? 0,
+                    leagueFinishes: leagueFinishes,
+                    honours: honours,
+                    seasonLabel: game.seasonLabel,
                   ),
                   _SquadTab(
                     players: players,
                     injuryLabels: injuryLabels,
                     stats: clubStats,
+                    currentSeason: game.currentSeason,
+                    careerStartYear: game.careerStartYear,
                   ),
                   _ClubStatsTab(
                     record: record,
@@ -156,13 +129,17 @@ class ClubDetailScreen extends ConsumerWidget {
                   _ScheduleTab(
                     clubId: club.id,
                     currentWeek: game.currentWeek,
+                    seasonLabel: game.seasonLabel(game.currentSeason),
                     fixtures: game.fixtures
                         .where((fixture) =>
                             fixture.season == game.currentSeason &&
                             (fixture.homeClubId == club.id ||
                                 fixture.awayClubId == club.id))
                         .toList(),
-                    results: game.resultsForClub(club.id).toList(),
+                    results: game.resultsForClubInSeason(
+                      club.id,
+                      game.currentSeason,
+                    ),
                     clubNames: clubNames,
                   ),
                 ],
@@ -178,13 +155,9 @@ class ClubDetailScreen extends ConsumerWidget {
 class _ClubHeader extends StatelessWidget {
   const _ClubHeader({
     required this.club,
-    required this.playerCount,
-    required this.points,
   });
 
   final Club club;
-  final int playerCount;
-  final int points;
 
   @override
   Widget build(BuildContext context) {
@@ -198,8 +171,14 @@ class _ClubHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _HeaderMetric(label: 'SQUAD', value: '$playerCount'),
-          _HeaderMetric(label: 'POINTS', value: '$points'),
+          _HeaderMetric(
+            label: 'CLUB VALUE',
+            value: GameFormatters.compactCurrency(club.clubValue),
+          ),
+          _HeaderMetric(
+            label: 'SQUAD VALUE',
+            value: GameFormatters.compactCurrency(club.squadValue),
+          ),
           _HeaderMetric(
             label: 'BUDGET',
             value: GameFormatters.compactCurrency(club.budget),
@@ -220,6 +199,7 @@ class _HeaderMetric extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
@@ -229,7 +209,7 @@ class _HeaderMetric extends StatelessWidget {
                   fontSize: 8,
                 ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           Text(
             value,
             maxLines: 1,
@@ -246,159 +226,301 @@ class _HeaderMetric extends StatelessWidget {
 
 class _OverviewTab extends StatelessWidget {
   const _OverviewTab({
-    required this.club,
-    required this.players,
-    required this.leagueName,
-    required this.record,
-    required this.recentResults,
-    required this.clubNames,
-    required this.managerName,
-    required this.managerProfile,
-    required this.managerRotation,
-    required this.transferPriority,
+    required this.leagueSize,
+    required this.leagueFinishes,
+    required this.honours,
+    required this.seasonLabel,
   });
 
-  final Club club;
-  final List<Player> players;
-  final String leagueName;
-  final ClubSeasonRecord? record;
-  final List<MatchResult> recentResults;
-  final Map<String, String> clubNames;
-  final String managerName;
-  final String managerProfile;
-  final String managerRotation;
-  final String transferPriority;
+  final int leagueSize;
+  final List<ClubLeagueFinish> leagueFinishes;
+  final List<ClubHonour> honours;
+  final String Function(int season) seasonLabel;
 
   @override
   Widget build(BuildContext context) {
-    final averageAge = players.isEmpty
-        ? 0
-        : players.map((player) => player.age).reduce((a, b) => a + b) /
-            players.length;
-    final averageAbility = players.isEmpty
-        ? 0
-        : players.map((player) => player.ability).reduce((a, b) => a + b) /
-            players.length;
-    final highestValue = players.isEmpty
-        ? 0.0
-        : players.map((player) => player.value).reduce((a, b) => a > b ? a : b);
-
-    return Column(
+    return ListView(
       key: const Key('clubOverviewTab'),
+      padding: const EdgeInsets.only(bottom: 24),
       children: [
-        const CompactSectionBar(title: 'Club snapshot'),
-        CompactInfoRow(label: 'Competition', value: leagueName),
-        CompactInfoRow(
-          label: 'League record',
-          value:
-              '${record?.won ?? 0}W  ${record?.drawn ?? 0}D  ${record?.lost ?? 0}L  ·  ${record?.points ?? 0} pts',
+        CompactSectionBar(
+          title: 'League position',
+          trailing: leagueFinishes.isEmpty
+              ? 'NO SEASONS'
+              : '${leagueFinishes.length} SEASONS',
         ),
-        CompactInfoRow(
-          label: 'Manager',
-          value: '$managerName  ·  $managerProfile',
-        ),
-        CompactInfoRow(
-          label: 'Squad profile',
-          value:
-              '${averageAge.toStringAsFixed(1)} avg age  ·  ${averageAbility.toStringAsFixed(1)} avg OVR',
-        ),
-        CompactInfoRow(
-          label: 'Rotation / recruitment',
-          value: '$managerRotation  ·  $transferPriority',
-        ),
-        CompactInfoRow(
-          label: 'Most valuable player',
-          value: GameFormatters.compactCurrency(highestValue),
-          valueColor: AppColors.amber,
+        _LeaguePositionChart(
+          finishes: leagueFinishes,
+          leagueSize: leagueSize,
+          seasonLabel: seasonLabel,
         ),
         CompactSectionBar(
-          title: 'Recent results',
-          trailing: recentResults.isEmpty ? 'NO MATCHES' : 'LAST 5',
+          title: 'Honours',
+          trailing: honours.isEmpty ? 'NONE YET' : '${honours.length} RECORDED',
         ),
-        Expanded(
-          child: recentResults.isEmpty
-              ? Center(
-                  child: Text(
-                    'Advance one week to begin the season.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.muted,
-                        ),
-                  ),
-                )
-              : Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    for (final result in recentResults)
-                      _ResultRow(result: result, clubNames: clubNames),
-                  ],
-                ),
-        ),
-        const CompactSectionBar(title: 'Club scale'),
-        CompactInfoRow(
-          label: 'Club valuation',
-          value: GameFormatters.compactCurrency(club.clubValue),
-        ),
-        CompactInfoRow(
-          label: 'Squad valuation',
-          value: GameFormatters.compactCurrency(club.squadValue),
-        ),
-        CompactInfoRow(
-          label: 'Transfer budget',
-          value: GameFormatters.compactCurrency(club.budget),
-          valueColor: AppColors.teal,
-        ),
+        if (honours.isEmpty)
+          const _EmptyHonours()
+        else
+          for (final honour in honours)
+            _HonourRow(honour: honour, seasonLabel: seasonLabel),
       ],
     );
   }
 }
 
-class _ResultRow extends StatelessWidget {
-  const _ResultRow({required this.result, required this.clubNames});
+class _LeaguePositionChart extends StatelessWidget {
+  const _LeaguePositionChart({
+    required this.finishes,
+    required this.leagueSize,
+    required this.seasonLabel,
+  });
 
-  final MatchResult result;
-  final Map<String, String> clubNames;
+  final List<ClubLeagueFinish> finishes;
+  final int leagueSize;
+  final String Function(int season) seasonLabel;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => context.push(AppRoutes.matchDetails(result.id)),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  clubNames[result.homeClubId] ?? 'Home',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.right,
-                ),
-              ),
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 10),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.slate,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  '${result.homeGoals}  –  ${result.awayGoals}',
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-              ),
-              Expanded(
-                child: Text(
-                  clubNames[result.awayClubId] ?? 'Away',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
+    if (finishes.isEmpty) {
+      return const SizedBox(
+        height: 180,
+        child: SectionPlaceholder(
+          icon: Icons.show_chart_outlined,
+          title: 'No league history yet',
+          message: 'League positions appear after the club plays a match.',
         ),
+      );
+    }
+
+    final maximumPosition = leagueSize < 2 ? 2 : leagueSize;
+    final spots = <FlSpot>[
+      for (var index = 0; index < finishes.length; index++)
+        FlSpot(
+          index.toDouble(),
+          (maximumPosition + 1 - finishes[index].position).toDouble(),
+        ),
+    ];
+
+    return Container(
+      key: const Key('clubLeaguePositionChart'),
+      height: 218,
+      margin: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+      padding: const EdgeInsets.fromLTRB(6, 14, 14, 8),
+      decoration: BoxDecoration(
+        color: AppColors.panelAlt,
+        border: Border.all(color: AppColors.divider),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: LineChart(
+        LineChartData(
+          minX: 0,
+          maxX: finishes.length == 1 ? 1 : (finishes.length - 1).toDouble(),
+          minY: 1,
+          maxY: maximumPosition.toDouble(),
+          lineTouchData: const LineTouchData(enabled: false),
+          gridData: FlGridData(
+            show: true,
+            drawVerticalLine: false,
+            horizontalInterval: maximumPosition <= 10 ? 1 : 5,
+            getDrawingHorizontalLine: (_) => const FlLine(
+              color: AppColors.divider,
+              strokeWidth: 1,
+            ),
+          ),
+          borderData: FlBorderData(
+            show: true,
+            border: const Border(
+              left: BorderSide(color: AppColors.slate),
+              bottom: BorderSide(color: AppColors.slate),
+            ),
+          ),
+          titlesData: FlTitlesData(
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            leftTitles: AxisTitles(
+              axisNameWidget: const Text(
+                'POSITION',
+                style: TextStyle(
+                  color: AppColors.muted,
+                  fontSize: 8,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              axisNameSize: 18,
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 28,
+                interval: maximumPosition <= 10 ? 1 : 5,
+                getTitlesWidget: (value, meta) {
+                  final position = maximumPosition + 1 - value.round();
+                  if (position < 1 || position > maximumPosition) {
+                    return const SizedBox.shrink();
+                  }
+                  return SideTitleWidget(
+                    meta: meta,
+                    child: Text(
+                      '$position',
+                      style: const TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 8,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 30,
+                interval: 1,
+                getTitlesWidget: (value, meta) {
+                  final index = value.round();
+                  if (index < 0 || index >= finishes.length) {
+                    return const SizedBox.shrink();
+                  }
+                  final label =
+                      _shortSeason(seasonLabel(finishes[index].season));
+                  return SideTitleWidget(
+                    meta: meta,
+                    space: 8,
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        color: finishes[index].isCurrentSeason
+                            ? AppColors.teal
+                            : AppColors.muted,
+                        fontSize: 8,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          lineBarsData: [
+            LineChartBarData(
+              spots: spots,
+              isCurved: finishes.length > 2,
+              curveSmoothness: 0.22,
+              color: AppColors.teal,
+              barWidth: 3,
+              isStrokeCapRound: true,
+              dotData: FlDotData(
+                show: true,
+                getDotPainter: (_, __, ___, ____) => FlDotCirclePainter(
+                  radius: 4,
+                  color: AppColors.paper,
+                  strokeWidth: 2,
+                  strokeColor: AppColors.teal,
+                ),
+              ),
+              belowBarData: BarAreaData(
+                show: true,
+                color: AppColors.teal.withValues(alpha: 0.10),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _shortSeason(String label) {
+    final parts = label.split('/');
+    if (parts.length != 2) return label;
+    return '${parts[0].substring(2)}/${parts[1].substring(2)}';
+  }
+}
+
+class _HonourRow extends StatelessWidget {
+  const _HonourRow({required this.honour, required this.seasonLabel});
+
+  final ClubHonour honour;
+  final String Function(int season) seasonLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final isChampion = honour.type == ClubHonourType.champion;
+    final color = isChampion ? AppColors.amber : AppColors.ratingBlue;
+    final result = isChampion ? 'League winner' : 'League runner-up';
+    return Container(
+      key: ValueKey('clubHonour-${honour.season}'),
+      constraints: const BoxConstraints(minHeight: 52),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: AppColors.divider)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(
+              seasonLabel(honour.season),
+              style: const TextStyle(
+                color: AppColors.muted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Icon(
+            isChampion ? Icons.emoji_events : Icons.military_tech,
+            size: 18,
+            color: color,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  honour.competition,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  result,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyHonours extends StatelessWidget {
+  const _EmptyHonours();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 18, vertical: 28),
+      child: Row(
+        children: [
+          Icon(Icons.emoji_events_outlined, color: AppColors.muted, size: 22),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'No league honours recorded yet.',
+              style: TextStyle(color: AppColors.muted, fontSize: 12),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -409,11 +531,15 @@ class _SquadTab extends StatelessWidget {
     required this.players,
     required this.injuryLabels,
     required this.stats,
+    required this.currentSeason,
+    required this.careerStartYear,
   });
 
   final List<Player> players;
   final Map<String, String> injuryLabels;
   final List<PlayerSeasonStats> stats;
+  final int currentSeason;
+  final int careerStartYear;
 
   @override
   Widget build(BuildContext context) {
@@ -424,25 +550,37 @@ class _SquadTab extends StatelessWidget {
         CompactTableHeader(
           identityLabel: 'PLAYER / STATUS',
           trailing: const [
-            CompactColumnLabel('APP', width: 32),
-            CompactColumnLabel('OVR', width: 38),
-            CompactColumnLabel('POT', width: 38),
+            CompactColumnLabel('AGE', width: 28),
+            CompactColumnLabel('OVR', width: 36),
+            CompactColumnLabel('P', width: 22),
+            CompactColumnLabel('G', width: 20),
+            CompactColumnLabel('A', width: 20),
+            CompactColumnLabel('PTS', width: 30),
+            CompactColumnLabel('EXP', width: 38),
           ],
         ),
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.only(bottom: 12),
             itemCount: players.length,
-            itemBuilder: (context, index) => _SquadPlayerCard(
-              player: players[index],
-              appearances: statsByPlayer[players[index].id]?.appearances ?? 0,
-              availability: injuryLabels[players[index].id] ??
-                  'Fatigue ${players[index].fatigue.round()}%',
-              isInjured: injuryLabels.containsKey(players[index].id),
-              isAlternate: index.isOdd,
-              onTap: () =>
-                  context.push(AppRoutes.playerDetails(players[index].id)),
-            ),
+            itemBuilder: (context, index) {
+              final player = players[index];
+              final playerStats = statsByPlayer[player.id];
+              return _SquadPlayerCard(
+                player: player,
+                stats: playerStats,
+                availability: injuryLabels[player.id] ??
+                    'Fatigue ${player.fatigue.round()}%',
+                isInjured: injuryLabels.containsKey(player.id),
+                isAlternate: index.isOdd,
+                contractExpiry: player.contractEndSeason == null
+                    ? '—'
+                    : '${careerStartYear + player.contractEndSeason!}',
+                isExpiringSoon: player.contractEndSeason != null &&
+                    player.contractEndSeason! <= currentSeason + 1,
+                onTap: () => context.push(AppRoutes.playerDetails(player.id)),
+              );
+            },
           ),
         ),
       ],
@@ -453,22 +591,28 @@ class _SquadTab extends StatelessWidget {
 class _SquadPlayerCard extends StatelessWidget {
   const _SquadPlayerCard({
     required this.player,
-    required this.appearances,
+    required this.stats,
     required this.availability,
     required this.isInjured,
     required this.isAlternate,
+    required this.contractExpiry,
+    required this.isExpiringSoon,
     required this.onTap,
   });
 
   final Player player;
-  final int appearances;
+  final PlayerSeasonStats? stats;
   final String availability;
   final bool isInjured;
   final bool isAlternate;
+  final String contractExpiry;
+  final bool isExpiringSoon;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final rating =
+        stats == null || stats!.appearances == 0 ? null : stats!.averageRating;
     return Material(
       color: isAlternate ? AppColors.panelAlt : AppColors.navy,
       child: InkWell(
@@ -485,10 +629,9 @@ class _SquadPlayerCard extends StatelessWidget {
                 color: isInjured ? AppColors.danger : AppColors.teal,
               ),
               const SizedBox(width: 7),
-              CompactPositionBadge(label: player.position.shortLabel),
-              const SizedBox(width: 8),
               Expanded(
                 child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -502,7 +645,7 @@ class _SquadPlayerCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${player.age} yrs  ·  $availability  ·  ${GameFormatters.compactCurrency(player.salary)}/wk',
+                      '${player.position.shortLabel}  ·  $availability  ·  ${GameFormatters.compactCurrency(player.salary)}/wk',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -515,9 +658,9 @@ class _SquadPlayerCard extends StatelessWidget {
                 ),
               ),
               SizedBox(
-                width: 32,
+                width: 28,
                 child: Text(
-                  '$appearances',
+                  '${player.age}',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: AppColors.muted,
@@ -529,11 +672,20 @@ class _SquadPlayerCard extends StatelessWidget {
               CompactRatingCell(
                 value: player.ability,
                 color: compactRatingColor(player.ability),
+                width: 36,
               ),
-              CompactRatingCell(
-                value: player.potential,
-                color: AppColors.teal,
-                emphasized: true,
+              _OutputNumber('${stats?.appearances ?? 0}', width: 22),
+              _OutputNumber('${stats?.goals ?? 0}', width: 20),
+              _OutputNumber('${stats?.assists ?? 0}', width: 20),
+              _OutputNumber(
+                rating == null ? '—' : rating.toStringAsFixed(1),
+                width: 30,
+                color: rating == null ? AppColors.muted : AppColors.teal,
+              ),
+              _OutputNumber(
+                contractExpiry,
+                width: 38,
+                color: isExpiringSoon ? AppColors.amber : AppColors.muted,
               ),
             ],
           ),
@@ -639,8 +791,9 @@ class _ClubStatsTab extends StatelessWidget {
           height: 30,
         ),
         CompactTableHeader(
-          identityLabel: 'PLAYER OUTPUT',
+          identityLabel: 'PLAYER',
           trailing: const [
+            CompactColumnLabel('POS', width: 34),
             CompactColumnLabel('APP', width: 32),
             CompactColumnLabel('G', width: 26),
             CompactColumnLabel('A', width: 26),
@@ -684,7 +837,7 @@ class _PlayerOutputRow extends StatelessWidget {
       child: InkWell(
         onTap: () => context.push(AppRoutes.playerDetails(player.id)),
         child: Container(
-          height: 39,
+          height: 44,
           padding: const EdgeInsets.only(left: 11),
           decoration: const BoxDecoration(
             border: Border(bottom: BorderSide(color: AppColors.slate)),
@@ -693,7 +846,7 @@ class _PlayerOutputRow extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  '${player.name}  ${player.position.shortLabel}',
+                  player.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -701,6 +854,11 @@ class _PlayerOutputRow extends StatelessWidget {
                         fontWeight: FontWeight.w800,
                       ),
                 ),
+              ),
+              _OutputNumber(
+                player.position.shortLabel,
+                width: 34,
+                color: AppColors.muted,
               ),
               _OutputNumber('${stats?.appearances ?? 0}', width: 32),
               _OutputNumber('${stats?.goals ?? 0}', width: 26),
@@ -735,6 +893,7 @@ class _OutputNumber extends StatelessWidget {
             color: color ?? AppColors.paper,
             fontSize: 10,
             fontWeight: FontWeight.w800,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
       );
@@ -768,16 +927,27 @@ class _FinanceTab extends StatelessWidget {
         club.totalSalary <= 0 ? 0.0 : club.balance / club.totalSalary;
     final transferSpend = transfers
         .where((item) => item.toClubId == club.id)
-        .fold<double>(0, (sum, item) => sum + item.fee);
+        .fold<double>(0, (sum, item) => sum + item.totalDealCost);
     final transferIncome = transfers
         .where((item) => item.fromClubId == club.id)
         .fold<double>(0, (sum, item) => sum + item.fee);
     final transferRows = transfers.take(8).map((item) {
       final isIncoming = item.toClubId == club.id;
       final otherClubId = isIncoming ? item.fromClubId : item.toClubId;
+      final moveLabel = switch (item.type) {
+        TransferMoveType.loan => 'LOAN ',
+        TransferMoveType.freeAgent => 'FREE ',
+        TransferMoveType.permanent => '',
+      };
+      final otherClubName = item.type == TransferMoveType.freeAgent
+          ? 'Free agent'
+          : clubNames[otherClubId] ?? 'Unknown';
+      final feeBreakdown = isIncoming && item.agentFee > 0
+          ? '${GameFormatters.compactCurrency(item.fee)} fee · ${GameFormatters.compactCurrency(item.agentFee)} agent'
+          : '${GameFormatters.compactCurrency(item.fee)} fee';
       return (
-        '${isIncoming ? 'IN' : 'OUT'} · ${playerNames[item.playerId] ?? 'Unknown player'}',
-        '${clubNames[otherClubId] ?? 'Unknown'} · ${GameFormatters.compactCurrency(item.fee)}',
+        '$moveLabel${isIncoming ? 'IN' : 'OUT'} · ${playerNames[item.playerId] ?? 'Unknown player'}',
+        '$otherClubName · $feeBreakdown',
       );
     }).toList(growable: false);
     final contractRows = contractEvents
@@ -839,7 +1009,7 @@ class _FinanceTab extends StatelessWidget {
         ),
         const CompactSectionBar(title: 'Transfers in / out'),
         CompactInfoRow(
-          label: 'Spent / received',
+          label: 'Deal spend / transfer income',
           value:
               '${GameFormatters.compactCurrency(transferSpend)}  /  ${GameFormatters.compactCurrency(transferIncome)}',
           height: 31,
@@ -904,7 +1074,7 @@ class _FinanceMetricStrip extends StatelessWidget {
                         maxLines: 1,
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                               color: AppColors.muted,
-                              fontSize: 7,
+                              fontSize: 8,
                               letterSpacing: 0.5,
                             ),
                       ),
@@ -937,6 +1107,7 @@ class _ScheduleTab extends StatelessWidget {
   const _ScheduleTab({
     required this.clubId,
     required this.currentWeek,
+    required this.seasonLabel,
     required this.fixtures,
     required this.results,
     required this.clubNames,
@@ -944,6 +1115,7 @@ class _ScheduleTab extends StatelessWidget {
 
   final String clubId;
   final int currentWeek;
+  final String seasonLabel;
   final List<LeagueFixture> fixtures;
   final List<MatchResult> results;
   final Map<String, String> clubNames;
@@ -960,7 +1132,7 @@ class _ScheduleTab extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 16),
       children: [
         CompactSectionBar(
-          title: 'Upcoming fixtures',
+          title: 'Upcoming · $seasonLabel',
           trailing: '${upcoming.length} REMAINING',
         ),
         if (upcoming.isEmpty)
@@ -974,7 +1146,7 @@ class _ScheduleTab extends StatelessWidget {
               isAlternate: index.isOdd,
             ),
         CompactSectionBar(
-          title: 'Completed matches',
+          title: 'Completed · $seasonLabel',
           trailing: '${completed.length} PLAYED',
         ),
         if (completed.isEmpty)
@@ -1091,7 +1263,7 @@ class _ClubResultRow extends StatelessWidget {
       child: InkWell(
         onTap: () => context.push(AppRoutes.matchDetails(result.id)),
         child: Container(
-          height: 40,
+          height: 44,
           padding: const EdgeInsets.only(left: 11),
           decoration: const BoxDecoration(
             border: Border(bottom: BorderSide(color: AppColors.slate)),

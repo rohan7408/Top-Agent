@@ -1,9 +1,14 @@
 import 'dart:math';
 
 import '../models/scout.dart';
+import 'agency_trust_calculator.dart';
 
 class ScoutCandidateGenerator {
-  const ScoutCandidateGenerator();
+  const ScoutCandidateGenerator({
+    this.trustCalculator = const AgencyTrustCalculator(),
+  });
+
+  final AgencyTrustCalculator trustCalculator;
 
   static const int candidatePoolSize = 4;
 
@@ -41,12 +46,14 @@ class ScoutCandidateGenerator {
     required int reputation,
     required int seed,
     required String idPrefix,
+    int officeLevel = 1,
   }) =>
       _generate(
         existing: const [],
         reputation: reputation,
         seed: seed,
         idPrefix: idPrefix,
+        officeLevel: officeLevel,
       );
 
   List<Scout> replenish({
@@ -54,12 +61,14 @@ class ScoutCandidateGenerator {
     required int reputation,
     required int seed,
     required String idPrefix,
+    int officeLevel = 1,
   }) =>
       _generate(
         existing: existing,
         reputation: reputation,
         seed: seed,
         idPrefix: idPrefix,
+        officeLevel: officeLevel,
       );
 
   List<Scout> _generate({
@@ -67,6 +76,7 @@ class ScoutCandidateGenerator {
     required int reputation,
     required int seed,
     required String idPrefix,
+    required int officeLevel,
   }) {
     final candidateCount = existing.where((scout) => scout.isCandidate).length;
     final additions = <Scout>[];
@@ -89,6 +99,11 @@ class ScoutCandidateGenerator {
           ability: ability,
           salary: salary,
           agencyId: Scout.candidatePoolAgencyId,
+          agencyTrust: trustCalculator.initialScoutTrust(
+            scoutAbility: ability,
+            reputation: reputation,
+            officeLevel: officeLevel,
+          ),
         ),
       );
     }

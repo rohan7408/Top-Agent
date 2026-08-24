@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import '../../domain/models/contract.dart';
 import '../../domain/models/agency_transaction.dart';
 import '../../domain/models/game_email.dart';
@@ -7,6 +5,7 @@ import '../../domain/models/game_state.dart';
 import '../../domain/models/player.dart';
 import '../../domain/services/scout_candidate_generator.dart';
 import '../../domain/services/talent_generator.dart';
+import '../../domain/services/talent_pool_policy.dart';
 
 class AgencyOfficeWeekResult {
   const AgencyOfficeWeekResult({
@@ -26,10 +25,12 @@ class AgencyOfficeEngine {
   const AgencyOfficeEngine({
     this.talentGenerator = const TalentGenerator(),
     this.candidateGenerator = const ScoutCandidateGenerator(),
+    this.talentPoolPolicy = const TalentPoolPolicy(),
   });
 
   final TalentGenerator talentGenerator;
   final ScoutCandidateGenerator candidateGenerator;
+  final TalentPoolPolicy talentPoolPolicy;
 
   AgencyOfficeWeekResult processWeek(
     GameState game, {
@@ -37,17 +38,26 @@ class AgencyOfficeEngine {
     required int nextWeek,
     required int seed,
   }) {
-    final hired = game.hiredScouts;
+    final cleanedGame = talentPoolPolicy.clean(game);
+    final hired = cleanedGame.hiredScouts;
     final payroll = hired.fold<double>(0, (sum, scout) => sum + scout.salary);
-    final commission = _weeklySalaryCommission(game);
-    var players = game.players;
-    var emails = game.emails;
+    final commission = _weeklySalaryCommission(cleanedGame);
+    var players = cleanedGame.players;
+    var emails = cleanedGame.emails;
     var discoveries = 0;
-    var availableCount = game.availableTalents.length;
-    final maximumTalentPool = max(6, game.office.clientCapacity * 2);
+    var availableCount = players
+        .where(
+          (player) =>
+              player.clubId == null &&
+              player.agentId == null &&
+              !player.isRetired &&
+              !player.isRecruited,
+        )
+        .length;
+    final maximumTalentPool = talentPoolPolicy.capacityFor(cleanedGame);
     final absoluteWeek = ((nextSeason - 1) * 50) + nextWeek;
     final transactions = [
-      ...game.agencyTransactions,
+      ...cleanedGame.agencyTransactions,
       if (commission > 0)
         AgencyTransaction(
           id: 'transaction-commission-s$nextSeason-w$nextWeek',
@@ -71,12 +81,14 @@ class AgencyOfficeEngine {
 
     for (final scout in hired) {
       if (availableCount >= maximumTalentPool) break;
-      final interval = max(3, 9 - (scout.ability ~/ 12));
+      final interval = (22 - (scout.ability ~/ 8)).clamp(10, 18);
       if ((absoluteWeek + _stableHash(scout.id)) % interval != 0) continue;
       final talent = talentGenerator
           .generateForScout(
             count: 1,
             scoutAbility: scout.ability,
+            scoutedByScoutId: scout.id,
+            maximumAbility: cleanedGame.office.scoutingRatingCap,
             seed: seed ^ _stableHash(scout.id),
             idPrefix: 'scouted-s$nextSeason-w$nextWeek-${scout.id}',
           )
@@ -100,19 +112,22 @@ class AgencyOfficeEngine {
     }
 
     final refreshedScouts = [
-      ...game.scouts,
+      ...cleanedGame.scouts,
       ...candidateGenerator.replenish(
-        existing: game.scouts,
-        reputation: game.agent.reputation,
+        existing: cleanedGame.scouts,
+        reputation: cleanedGame.agent.reputation,
         seed: seed ^ 0x57AFF,
         idPrefix: 'scout-s$nextSeason-w$nextWeek',
+        officeLevel: cleanedGame.office.level,
       ),
     ];
 
     return AgencyOfficeWeekResult(
-      state: game.copyWith(
-        agent: game.agent.copyWith(
-          money: game.agent.money + commission - payroll,
+      state: cleanedGame.copyWith(
+        agent: cleanedGame.agent.copyWith(
+          money: cleanedGame.agent.money + commission - payroll,
+          totalSalaryCommissionEarned:
+              cleanedGame.agent.totalSalaryCommissionEarned + commission,
         ),
         players: players,
         scouts: refreshedScouts,
@@ -128,11 +143,11 @@ class AgencyOfficeEngine {
   double _weeklySalaryCommission(GameState game) {
     final represented = game.representedPlayers
         .where((player) => player.clubId != null && player.salary > 0)
-        .map((player) => player.id)
-        .toSet();
+        .toList(growable: false);
+    final representedIds = represented.map((player) => player.id).toSet();
     final latestContracts = <String, Contract>{};
     for (final contract in game.contracts) {
-      if (!represented.contains(contract.playerId) ||
+      if (!representedIds.contains(contract.playerId) ||
           contract.endSeason < game.currentSeason) {
         continue;
       }
@@ -141,9 +156,13 @@ class AgencyOfficeEngine {
         latestContracts[contract.playerId] = contract;
       }
     }
-    return latestContracts.values.fold<double>(
+    return represented.fold<double>(
       0,
-      (sum, contract) => sum + contract.weeklySalaryCommission,
+      (sum, player) {
+        final contract = latestContracts[player.id];
+        if (contract == null) return sum;
+        return sum + (player.salary * contract.salaryCommissionRate);
+      },
     );
   }
 

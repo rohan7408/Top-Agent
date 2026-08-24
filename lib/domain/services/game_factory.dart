@@ -58,6 +58,7 @@ class GameFactory {
       reputation: agent.reputation,
       seed: seed ^ 0x57AFF,
       idPrefix: 'scout-${timestamp.microsecondsSinceEpoch}',
+      officeLevel: 1,
     );
     final fixtures = world.leagues
         .expand(

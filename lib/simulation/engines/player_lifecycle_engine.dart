@@ -81,8 +81,9 @@ class PlayerLifecycleEngine {
           );
       potential = potential.clamp(evolvedAbility, 99);
       final shouldRetire = _shouldRetire(player, newAge, random);
+      final owningClubId = player.loanParentClubId ?? player.clubId;
       final contractExpired = !shouldRetire &&
-          player.clubId != null &&
+          owningClubId != null &&
           (player.contractEndSeason ?? 999) <= game.currentSeason;
       final leavesClub = shouldRetire || contractExpired;
       final value = shouldRetire
@@ -100,8 +101,14 @@ class PlayerLifecycleEngine {
         potential: potential,
         value: value,
         clearClubId: leavesClub,
+        isTransferListed: leavesClub ? false : player.isTransferListed,
+        isLoanListed: leavesClub ? false : player.isLoanListed,
         salary: leavesClub ? 0 : player.salary,
         clearContractEndSeason: leavesClub,
+        clearLoanParentClubId: leavesClub,
+        clearLoanEndSeason: leavesClub,
+        clearLoanEndWeek: leavesClub,
+        clearLoanOriginalSalary: leavesClub,
         isRetired: shouldRetire,
         retirementSeason: shouldRetire ? nextSeason : null,
         fatigue: leavesClub ? 0 : player.fatigue,
@@ -137,7 +144,7 @@ class PlayerLifecycleEngine {
             id: eventId,
             type: ContractEventType.expired,
             playerId: player.id,
-            clubId: player.clubId!,
+            clubId: owningClubId,
             season: game.currentSeason,
             week: 50,
             weeklySalary: player.salary,
@@ -146,7 +153,7 @@ class PlayerLifecycleEngine {
           ),
         );
         if (player.agentId == game.agent.id) {
-          final clubName = game.clubById(player.clubId!)?.name ?? 'the club';
+          final clubName = game.clubById(owningClubId)?.name ?? 'the club';
           emails.insert(
             0,
             GameEmail(
@@ -158,7 +165,7 @@ class PlayerLifecycleEngine {
               season: nextSeason,
               week: 1,
               playerId: player.id,
-              clubId: player.clubId,
+              clubId: owningClubId,
             ),
           );
         }
@@ -192,15 +199,29 @@ class PlayerLifecycleEngine {
             squad.fold<double>(0, (sum, player) => sum + player.salary),
       );
     }).toList(growable: false);
+    final playersBeforeDevelopment = {
+      for (final player in game.players) player.id: player,
+    };
+    final finalizedSeasonStats = game.playerSeasonStats.map((stats) {
+      if (stats.season != game.currentSeason) return stats;
+      final player = playersBeforeDevelopment[stats.playerId];
+      if (player == null) return stats;
+      return stats.withSnapshot(
+        overall: player.ability,
+        marketValue: player.value,
+      );
+    }).toList(growable: false);
 
     return PlayerLifecycleResult(
       state: game.copyWith(
         players: updatedPlayers,
+        playerSeasonStats: finalizedSeasonStats,
         clubs: clubs,
         contracts: game.contracts.where((contract) {
           final player = updatedPlayers
               .firstWhere((player) => player.id == contract.playerId);
-          return !player.isRetired && player.clubId == contract.clubId;
+          return !player.isRetired &&
+              (player.loanParentClubId ?? player.clubId) == contract.clubId;
         }).toList(growable: false),
         emails: emails,
         contractEvents: contractEvents,

@@ -3,6 +3,7 @@ import 'agency_event.dart';
 import 'agency_transaction.dart';
 import 'agency_office.dart';
 import 'club.dart';
+import 'club_agency_relationship.dart';
 import 'club_manager.dart';
 import 'club_offer.dart';
 import 'club_season_record.dart';
@@ -11,6 +12,7 @@ import 'contract_event.dart';
 import 'game_email.dart';
 import 'league.dart';
 import 'league_fixture.dart';
+import 'league_season_history.dart';
 import 'match_result.dart';
 import 'player.dart';
 import 'player_match_performance.dart';
@@ -22,7 +24,7 @@ import 'transfer_record.dart';
 import 'training_ground.dart';
 
 class GameState {
-  static const int currentSchemaVersion = 13;
+  static const int currentSchemaVersion = 20;
 
   GameState({
     required this.agent,
@@ -42,6 +44,7 @@ class GameState {
     List<LeagueFixture> fixtures = const [],
     List<PlayerMatchPerformance> playerPerformances = const [],
     List<PlayerSeasonStats> playerSeasonStats = const [],
+    List<LeagueSeasonHistory> leagueHistory = const [],
     List<ClubManager> clubManagers = const [],
     List<GameEmail> emails = const [],
     List<TransferRecord> transfers = const [],
@@ -50,6 +53,7 @@ class GameState {
     List<PlayerTrainingPlan> trainingPlans = const [],
     List<AgencyTransaction> agencyTransactions = const [],
     List<AgencyEvent> agencyEvents = const [],
+    List<ClubAgencyRelationship> clubAgencyRelationships = const [],
   })  : players = List.unmodifiable(players),
         clubs = List.unmodifiable(clubs),
         leagues = List.unmodifiable(leagues),
@@ -61,6 +65,7 @@ class GameState {
         fixtures = List.unmodifiable(fixtures),
         playerPerformances = List.unmodifiable(playerPerformances),
         playerSeasonStats = List.unmodifiable(playerSeasonStats),
+        leagueHistory = List.unmodifiable(leagueHistory),
         clubManagers = List.unmodifiable(clubManagers),
         emails = List.unmodifiable(emails),
         transfers = List.unmodifiable(transfers),
@@ -68,7 +73,8 @@ class GameState {
         contractEvents = List.unmodifiable(contractEvents),
         trainingPlans = List.unmodifiable(trainingPlans),
         agencyTransactions = List.unmodifiable(agencyTransactions),
-        agencyEvents = List.unmodifiable(agencyEvents);
+        agencyEvents = List.unmodifiable(agencyEvents),
+        clubAgencyRelationships = List.unmodifiable(clubAgencyRelationships);
 
   final int schemaVersion;
   final int careerStartYear;
@@ -87,6 +93,7 @@ class GameState {
   final List<LeagueFixture> fixtures;
   final List<PlayerMatchPerformance> playerPerformances;
   final List<PlayerSeasonStats> playerSeasonStats;
+  final List<LeagueSeasonHistory> leagueHistory;
   final List<ClubManager> clubManagers;
   final List<GameEmail> emails;
   final List<TransferRecord> transfers;
@@ -95,11 +102,19 @@ class GameState {
   final List<PlayerTrainingPlan> trainingPlans;
   final List<AgencyTransaction> agencyTransactions;
   final List<AgencyEvent> agencyEvents;
+  final List<ClubAgencyRelationship> clubAgencyRelationships;
 
   int get currentWeek => agent.currentWeek;
   int get currentSeason => agent.currentSeason;
   int get currentYear => careerStartYear + currentSeason - 1;
   int get currentAbsoluteWeek => ((currentSeason - 1) * 50) + currentWeek;
+
+  int clubAgencyRelationshipScore(String clubId) =>
+      clubAgencyRelationships
+          .where((relationship) => relationship.clubId == clubId)
+          .map((relationship) => relationship.score)
+          .firstOrNull ??
+      0;
 
   double get currentWeekAgencyBalance => agencyTransactions
       .where(
@@ -142,6 +157,14 @@ class GameState {
   List<Scout> get hiredScouts => scouts
       .where((scout) => scout.agencyId == agent.id)
       .toList(growable: false);
+
+  /// Potential is hidden until one of this agency's scouts has produced a
+  /// report. The knowledge remains after that scout later leaves the agency.
+  bool canViewPotential(Player player) {
+    final scoutId = player.scoutedByScoutId;
+    if (scoutId == null) return false;
+    return scouts.any((scout) => scout.id == scoutId);
+  }
 
   bool get isAgencyAtClientCapacity =>
       representedPlayers.length >= office.clientCapacity;
@@ -271,6 +294,11 @@ class GameState {
     return List.unmodifiable(results);
   }
 
+  List<MatchResult> resultsForClubInSeason(String clubId, int season) =>
+      resultsForClub(clubId)
+          .where((result) => result.season == season)
+          .toList(growable: false);
+
   MatchResult? matchResultById(String matchId) {
     for (final result in matchResults) {
       if (result.id == matchId) return result;
@@ -306,6 +334,14 @@ class GameState {
     return List.unmodifiable(performances);
   }
 
+  List<LeagueSeasonHistory> historyForLeague(String leagueId) {
+    final history = leagueHistory
+        .where((item) => item.leagueId == leagueId)
+        .toList(growable: true)
+      ..sort((first, second) => second.season.compareTo(first.season));
+    return List.unmodifiable(history);
+  }
+
   GameState copyWith({
     Agent? agent,
     AgencyOffice? office,
@@ -321,6 +357,7 @@ class GameState {
     List<LeagueFixture>? fixtures,
     List<PlayerMatchPerformance>? playerPerformances,
     List<PlayerSeasonStats>? playerSeasonStats,
+    List<LeagueSeasonHistory>? leagueHistory,
     List<ClubManager>? clubManagers,
     List<GameEmail>? emails,
     List<TransferRecord>? transfers,
@@ -329,6 +366,7 @@ class GameState {
     List<PlayerTrainingPlan>? trainingPlans,
     List<AgencyTransaction>? agencyTransactions,
     List<AgencyEvent>? agencyEvents,
+    List<ClubAgencyRelationship>? clubAgencyRelationships,
   }) {
     return GameState(
       schemaVersion: schemaVersion,
@@ -348,6 +386,7 @@ class GameState {
       fixtures: fixtures ?? this.fixtures,
       playerPerformances: playerPerformances ?? this.playerPerformances,
       playerSeasonStats: playerSeasonStats ?? this.playerSeasonStats,
+      leagueHistory: leagueHistory ?? this.leagueHistory,
       clubManagers: clubManagers ?? this.clubManagers,
       emails: emails ?? this.emails,
       transfers: transfers ?? this.transfers,
@@ -356,6 +395,8 @@ class GameState {
       trainingPlans: trainingPlans ?? this.trainingPlans,
       agencyTransactions: agencyTransactions ?? this.agencyTransactions,
       agencyEvents: agencyEvents ?? this.agencyEvents,
+      clubAgencyRelationships:
+          clubAgencyRelationships ?? this.clubAgencyRelationships,
     );
   }
 
@@ -379,6 +420,7 @@ class GameState {
             playerPerformances.map((item) => item.toJson()).toList(),
         'playerSeasonStats':
             playerSeasonStats.map((item) => item.toJson()).toList(),
+        'leagueHistory': leagueHistory.map((item) => item.toJson()).toList(),
         'clubManagers': clubManagers.map((item) => item.toJson()).toList(),
         'emails': emails.map((item) => item.toJson()).toList(),
         'transfers': transfers.map((item) => item.toJson()).toList(),
@@ -388,6 +430,8 @@ class GameState {
         'agencyTransactions':
             agencyTransactions.map((item) => item.toJson()).toList(),
         'agencyEvents': agencyEvents.map((item) => item.toJson()).toList(),
+        'clubAgencyRelationships':
+            clubAgencyRelationships.map((item) => item.toJson()).toList(),
       };
 
   factory GameState.fromJson(Map<String, Object?> json) {
@@ -395,13 +439,10 @@ class GameState {
       schemaVersion: currentSchemaVersion,
       careerStartYear: (json['careerStartYear'] as int?) ?? 2025,
       createdAt: DateTime.parse(json['createdAt']! as String),
-      agent: Agent.fromJson((json['agent']! as Map).cast<String, Object?>()),
+      agent: _agentFromJson(json),
       office: _officeFromJson(json),
       trainingGround: _trainingGroundFromJson(json),
-      players: (json['players']! as List<Object?>)
-          .map(
-              (item) => Player.fromJson((item! as Map).cast<String, Object?>()))
-          .toList(),
+      players: _playersFromJson(json),
       clubs: (json['clubs']! as List<Object?>)
           .map((item) => Club.fromJson((item! as Map).cast<String, Object?>()))
           .toList(),
@@ -440,6 +481,11 @@ class GameState {
                     (item! as Map).cast<String, Object?>(),
                   ))
               .toList(),
+      leagueHistory: ((json['leagueHistory'] as List<Object?>?) ?? const [])
+          .map((item) => LeagueSeasonHistory.fromJson(
+                (item! as Map).cast<String, Object?>(),
+              ))
+          .toList(),
       clubManagers: ((json['clubManagers'] as List<Object?>?) ?? const [])
           .map((item) => ClubManager.fromJson(
                 (item! as Map).cast<String, Object?>(),
@@ -480,6 +526,43 @@ class GameState {
                 (item! as Map).cast<String, Object?>(),
               ))
           .toList(),
+      clubAgencyRelationships:
+          ((json['clubAgencyRelationships'] as List<Object?>?) ?? const [])
+              .map((item) => ClubAgencyRelationship.fromJson(
+                    (item! as Map).cast<String, Object?>(),
+                  ))
+              .toList(),
+    );
+  }
+
+  static Agent _agentFromJson(Map<String, Object?> json) {
+    final rawAgent = (json['agent']! as Map).cast<String, Object?>();
+    final agent = Agent.fromJson(rawAgent);
+    if (rawAgent.containsKey('totalAgentFeesEarned') &&
+        rawAgent.containsKey('totalSalaryCommissionEarned')) {
+      return agent;
+    }
+    final contracts = _contractsFromJson(json);
+    final contractFees = contracts.fold<double>(
+      0,
+      (sum, contract) => sum + contract.agentFee,
+    );
+    final transactions =
+        ((json['agencyTransactions'] as List<Object?>?) ?? const [])
+            .map((item) => AgencyTransaction.fromJson(
+                  (item! as Map).cast<String, Object?>(),
+                ))
+            .toList(growable: false);
+    final recordedFees = transactions
+        .where((item) => item.type == AgencyTransactionType.agentFee)
+        .fold<double>(0, (sum, item) => sum + item.amount);
+    final recordedCommission = transactions
+        .where((item) => item.type == AgencyTransactionType.salaryCommission)
+        .fold<double>(0, (sum, item) => sum + item.amount);
+    return agent.copyWith(
+      totalAgentFeesEarned:
+          contractFees > recordedFees ? contractFees : recordedFees,
+      totalSalaryCommissionEarned: recordedCommission,
     );
   }
 
@@ -512,6 +595,20 @@ class GameState {
         .toList(growable: false);
   }
 
+  static List<Player> _playersFromJson(Map<String, Object?> json) {
+    final scouts = _scoutsFromJson(json);
+    return (json['players']! as List<Object?>).map((item) {
+      final player = Player.fromJson((item! as Map).cast<String, Object?>());
+      if (player.scoutedByScoutId != null) return player;
+      final matchingScout = scouts
+          .where((scout) => player.id.contains('-${scout.id}-'))
+          .firstOrNull;
+      return matchingScout == null
+          ? player
+          : player.copyWith(scoutedByScoutId: matchingScout.id);
+    }).toList(growable: false);
+  }
+
   static List<Contract> _contractsFromJson(Map<String, Object?> json) {
     final migratedRate = _officeFromJson(json).salaryCommissionRate;
     return ((json['contracts'] as List<Object?>?) ?? const []).map((item) {
@@ -530,6 +627,7 @@ class GameState {
         contractLength: contract.contractLength,
         startSeason: contract.startSeason,
         endSeason: contract.endSeason,
+        startWeek: contract.startWeek,
         salaryCommissionRate: migratedRate,
       );
     }).toList(growable: false);

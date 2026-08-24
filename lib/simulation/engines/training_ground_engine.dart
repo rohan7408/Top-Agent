@@ -1,6 +1,6 @@
-import '../../domain/models/game_email.dart';
+import 'dart:math';
+
 import '../../domain/models/game_state.dart';
-import '../../domain/models/player.dart';
 import '../../domain/services/talent_generator.dart';
 
 class TrainingGroundWeekResult {
@@ -28,6 +28,10 @@ class TrainingGroundEngine {
   }) {
     final absoluteWeek = ((nextSeason - 1) * 50) + nextWeek;
     final ground = game.trainingGround;
+    final maximumTalentPool = max(2, game.office.clientCapacity);
+    if (game.availableTalents.length >= maximumTalentPool) {
+      return TrainingGroundWeekResult(state: game, talentsDeveloped: 0);
+    }
     if (ground.weeksUntilIntake(absoluteWeek) > 0) {
       return TrainingGroundWeekResult(state: game, talentsDeveloped: 0);
     }
@@ -41,22 +45,10 @@ class TrainingGroundEngine {
           idPrefix: 'academy-s$nextSeason-w$nextWeek-l${ground.level}',
         )
         .single;
-    final email = GameEmail(
-      id: 'email-academy-s$nextSeason-w$nextWeek-${talent.id}',
-      type: GameEmailType.world,
-      subject: 'Training Ground prospect: ${talent.name}',
-      body:
-          'Your Level ${ground.level} Training Ground developed a ${talent.age}-year-old ${talent.position.label.toLowerCase()} rated ${talent.ability} with ${talent.potential} potential. No scout was required.',
-      season: nextSeason,
-      week: nextWeek,
-      playerId: talent.id,
-    );
-
     return TrainingGroundWeekResult(
       state: game.copyWith(
         trainingGround: ground.recordIntake(absoluteWeek),
         players: [...game.players, talent],
-        emails: [email, ...game.emails],
       ),
       talentsDeveloped: 1,
     );

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/router/app_router.dart';
 import '../../../app/theme/app_colors.dart';
+import '../../../core/widgets/section_placeholder.dart';
 import '../../../domain/models/game_state.dart';
 import '../../../domain/models/player.dart';
 import '../../../domain/services/league_statistics_service.dart';
@@ -170,7 +171,7 @@ class _HeaderText extends StatelessWidget {
         textAlign: right ? TextAlign.right : TextAlign.left,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: AppColors.muted,
-              fontSize: 7,
+              fontSize: 8,
             ),
       );
 }
@@ -226,7 +227,7 @@ class _LeaderboardRow extends StatelessWidget {
                       player.position.shortLabel,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                             color: AppColors.teal,
-                            fontSize: 6,
+                            fontSize: 8,
                           ),
                     ),
                   ),
@@ -285,16 +286,9 @@ class _EmptyLeaders extends StatelessWidget {
   const _EmptyLeaders();
 
   @override
-  Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            'No player statistics yet. Advance to the first match week.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppColors.muted,
-                ),
-          ),
-        ),
+  Widget build(BuildContext context) => const SectionPlaceholder(
+        icon: Icons.leaderboard_outlined,
+        title: 'No player statistics yet',
+        message: 'Advance to the first match week to populate the rankings.',
       );
 }

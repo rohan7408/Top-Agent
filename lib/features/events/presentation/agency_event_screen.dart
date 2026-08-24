@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
+import '../../../core/widgets/compact_page_chrome.dart';
+import '../../../core/widgets/section_placeholder.dart';
 import '../../../domain/models/agency_event.dart';
 import '../../../domain/models/game_state.dart';
 
@@ -18,7 +20,6 @@ class AgencyEventScreen extends ConsumerStatefulWidget {
 
 class _AgencyEventScreenState extends ConsumerState<AgencyEventScreen> {
   bool _isResolving = false;
-  bool _isConfirmingExit = false;
 
   @override
   Widget build(BuildContext context) {
@@ -26,8 +27,14 @@ class _AgencyEventScreenState extends ConsumerState<AgencyEventScreen> {
     final event = game?.agencyEventById(widget.eventId);
     if (game == null || event == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Agency event')),
-        body: const Center(child: Text('This event is no longer available.')),
+        appBar: AppBar(
+          title: const CompactPageTitle(title: 'Agency event'),
+        ),
+        body: const SectionPlaceholder(
+          icon: Icons.event_busy_outlined,
+          title: 'Event unavailable',
+          message: 'This event is no longer available in the current career.',
+        ),
       );
     }
     final pending = event.status == AgencyEventStatus.pending;
@@ -35,32 +42,15 @@ class _AgencyEventScreenState extends ConsumerState<AgencyEventScreen> {
     final outcomeAccent = _outcomeColor(event.outcome);
     return PopScope<void>(
       canPop: !pending,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _confirmDefer();
-      },
       child: Scaffold(
         key: const Key('agencyEventPage'),
         appBar: AppBar(
           toolbarHeight: 50,
-          leading: IconButton(
-            tooltip: pending ? 'Decide later' : 'Back',
-            onPressed:
-                pending ? _confirmDefer : () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back_rounded),
-          ),
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Agency event'),
-              Text(
-                _categoryLabel(event.category).toUpperCase(),
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: accent,
-                      fontSize: 7,
-                      letterSpacing: 1.1,
-                    ),
-              ),
-            ],
+          automaticallyImplyLeading: !pending,
+          title: CompactPageTitle(
+            title: 'Agency event',
+            eyebrow: _categoryLabel(event.category),
+            accent: accent,
           ),
         ),
         body: SafeArea(
@@ -116,30 +106,25 @@ class _AgencyEventScreenState extends ConsumerState<AgencyEventScreen> {
                   ],
                 ),
               ),
-              Container(
-                width: double.infinity,
-                decoration: const BoxDecoration(
-                  color: AppColors.panelAlt,
-                  border: Border(top: BorderSide(color: AppColors.slate)),
+              if (!pending)
+                Container(
+                  width: double.infinity,
+                  decoration: const BoxDecoration(
+                    color: AppColors.panelAlt,
+                    border: Border(top: BorderSide(color: AppColors.slate)),
+                  ),
+                  padding: const EdgeInsets.fromLTRB(12, 7, 12, 8),
+                  child: OutlinedButton.icon(
+                    key: const Key('agencyEventReturnButton'),
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.paper,
+                      side: const BorderSide(color: AppColors.slate),
+                    ),
+                    icon: const Icon(Icons.arrow_back_rounded, size: 17),
+                    label: const Text('RETURN TO AGENCY'),
+                  ),
                 ),
-                padding: const EdgeInsets.fromLTRB(12, 7, 12, 8),
-                child: pending
-                    ? OutlinedButton(
-                        key: const Key('agencyEventDecideLaterButton'),
-                        onPressed: _isResolving ? null : _confirmDefer,
-                        child: const Text('DECIDE LATER'),
-                      )
-                    : OutlinedButton.icon(
-                        key: const Key('agencyEventReturnButton'),
-                        onPressed: () => Navigator.of(context).pop(),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.paper,
-                          side: const BorderSide(color: AppColors.slate),
-                        ),
-                        icon: const Icon(Icons.arrow_back_rounded, size: 17),
-                        label: const Text('RETURN TO AGENCY'),
-                      ),
-              ),
             ],
           ),
         ),
@@ -160,32 +145,6 @@ class _AgencyEventScreenState extends ConsumerState<AgencyEventScreen> {
         const SnackBar(content: Text('This decision could not be recorded.')),
       );
     }
-  }
-
-  Future<void> _confirmDefer() async {
-    if (_isConfirmingExit) return;
-    _isConfirmingExit = true;
-    final leave = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Decide later?'),
-        content: const Text(
-          'The event will stay pending in Email until you return and choose an option.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Continue decision'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Decide later'),
-          ),
-        ],
-      ),
-    );
-    _isConfirmingExit = false;
-    if (leave == true && mounted) Navigator.of(context).pop();
   }
 }
 
@@ -287,7 +246,7 @@ class _SubjectStrip extends StatelessWidget {
                         lines[index].$1.toUpperCase(),
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                               color: AppColors.muted,
-                              fontSize: 7,
+                              fontSize: 8,
                             ),
                       ),
                     ),
@@ -349,7 +308,7 @@ class _SectionLabel extends StatelessWidget {
                   textAlign: TextAlign.end,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: AppColors.muted,
-                        fontSize: 7,
+                        fontSize: 8,
                       ),
                 ),
               ),
@@ -415,7 +374,7 @@ class _ChoiceRow extends StatelessWidget {
                                     .labelSmall
                                     ?.copyWith(
                                       color: AppColors.amber,
-                                      fontSize: 7,
+                                      fontSize: 8,
                                     ),
                               ),
                           ],
@@ -478,7 +437,7 @@ class _OutcomePreviewLine extends StatelessWidget {
               label,
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
                     color: color,
-                    fontSize: 6.5,
+                    fontSize: 8,
                   ),
             ),
           ),
@@ -569,17 +528,29 @@ List<(String, String)> _subjectLines(GameState game, AgencyEvent event) {
     final player = game.players
         .where((candidate) => candidate.id == event.playerId)
         .firstOrNull;
-    if (player != null) lines.add(('Player', player.name));
+    if (player != null) {
+      lines.add(('Player', player.name));
+      lines.add(('Trust', '${player.agentTrust}'));
+    }
   }
   if (event.clubId != null) {
     final club = game.clubById(event.clubId!);
-    if (club != null) lines.add(('Club', club.name));
+    if (club != null) {
+      lines.add(('Club', club.name));
+      lines.add((
+        'Club relation',
+        '${game.clubAgencyRelationshipScore(club.id)}',
+      ));
+    }
   }
   if (event.scoutId != null) {
     final scout = game.scouts
         .where((candidate) => candidate.id == event.scoutId)
         .firstOrNull;
-    if (scout != null) lines.add(('Scout', scout.name));
+    if (scout != null) {
+      lines.add(('Scout', scout.name));
+      lines.add(('Trust', '${scout.agencyTrust}'));
+    }
   }
   return lines;
 }
@@ -592,6 +563,12 @@ String _successImpact(AgencyEventChoice choice) {
   }
   if (choice.fatigueImpact != 0) {
     parts.add('${_signedNumber(choice.fatigueImpact)} fatigue');
+  }
+  if (choice.trustImpact != 0) {
+    parts.add('${_signedNumber(choice.trustImpact)} trust');
+  }
+  if (choice.clubRelationshipImpact != 0) {
+    parts.add('${_signedNumber(choice.clubRelationshipImpact)} club');
   }
   return parts.isEmpty ? choice.detail : parts.join(' · ');
 }
@@ -607,6 +584,12 @@ String _failureImpact(AgencyEventChoice choice) {
   if (choice.failureFatigueImpact != 0) {
     parts.add('${_signedNumber(choice.failureFatigueImpact)} fatigue');
   }
+  if (choice.failureTrustImpact != 0) {
+    parts.add('${_signedNumber(choice.failureTrustImpact)} trust');
+  }
+  if (choice.failureClubRelationshipImpact != 0) {
+    parts.add('${_signedNumber(choice.failureClubRelationshipImpact)} club');
+  }
   return parts.isEmpty ? 'No reward' : parts.join(' · ');
 }
 
@@ -621,6 +604,12 @@ String _resolvedImpact(AgencyEvent event) {
   if (event.resolvedFatigueImpact != 0) {
     parts.add('${_signedNumber(event.resolvedFatigueImpact)} fatigue');
   }
+  if (event.resolvedTrustImpact != 0) {
+    parts.add('${_signedNumber(event.resolvedTrustImpact)} trust');
+  }
+  if (event.resolvedClubRelationshipImpact != 0) {
+    parts.add('${_signedNumber(event.resolvedClubRelationshipImpact)} club');
+  }
   return parts.isEmpty ? 'No balance or reputation change' : parts.join(' · ');
 }
 
@@ -631,26 +620,32 @@ String _signedNumber(num value) => '${value > 0 ? '+' : ''}${value.round()}';
 
 String _categoryLabel(AgencyEventCategory category) => switch (category) {
       AgencyEventCategory.commercial => 'Commercial',
+      AgencyEventCategory.media => 'Media',
       AgencyEventCategory.discipline => 'Discipline',
       AgencyEventCategory.career => 'Career',
       AgencyEventCategory.welfare => 'Player welfare',
       AgencyEventCategory.agency => 'Agency operations',
+      AgencyEventCategory.finance => 'Agency finance',
     };
 
 Color _categoryColor(AgencyEventCategory category) => switch (category) {
       AgencyEventCategory.commercial => AppColors.amber,
+      AgencyEventCategory.media => AppColors.ratingBlue,
       AgencyEventCategory.discipline => AppColors.danger,
       AgencyEventCategory.career => AppColors.ratingBlue,
       AgencyEventCategory.welfare => AppColors.teal,
       AgencyEventCategory.agency => AppColors.muted,
+      AgencyEventCategory.finance => AppColors.teal,
     };
 
 IconData _categoryIcon(AgencyEventCategory category) => switch (category) {
       AgencyEventCategory.commercial => Icons.handshake_outlined,
+      AgencyEventCategory.media => Icons.campaign_outlined,
       AgencyEventCategory.discipline => Icons.gavel_outlined,
       AgencyEventCategory.career => Icons.swap_horiz_rounded,
       AgencyEventCategory.welfare => Icons.favorite_border_rounded,
       AgencyEventCategory.agency => Icons.business_center_outlined,
+      AgencyEventCategory.finance => Icons.account_balance_outlined,
     };
 
 Color _outcomeColor(AgencyEventOutcome outcome) => switch (outcome) {

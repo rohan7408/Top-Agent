@@ -4,9 +4,11 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/router/app_router.dart';
 import '../../../app/theme/app_colors.dart';
+import '../../../app/theme/app_tokens.dart';
 import '../../../application/game_controller.dart';
 import '../../../core/formatters/game_formatters.dart';
 import '../../../core/widgets/compact_data_table.dart';
+import '../../../core/widgets/section_placeholder.dart';
 import '../../../domain/models/player.dart';
 
 class TalentsScreen extends ConsumerWidget {
@@ -21,64 +23,76 @@ class TalentsScreen extends ConsumerWidget {
 
     return Column(
       children: [
-        Material(
-          color: AppColors.navy,
-          child: InkWell(
-            onTap: () => context.push(AppRoutes.clubs),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-              child: Row(
-                children: [
-                  const Icon(Icons.public_rounded,
-                      color: AppColors.amber, size: 16),
-                  const SizedBox(width: 7),
-                  Expanded(
-                    child: Text(
-                      game.isAgencyAtClientCapacity
-                          ? 'Agency full · upgrade Office'
-                          : '$leagueName · ${game.clubs.length} clubs',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w700,
+        SizedBox(
+          height: 44,
+          child: Material(
+            color: AppColors.navy,
+            child: InkWell(
+              onTap: () => context.push(AppRoutes.clubs),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 13, right: 4),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.public_rounded,
+                      color: AppColors.amber,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        game.isAgencyAtClientCapacity
+                            ? 'Agency full · upgrade Office'
+                            : '$leagueName · ${game.clubs.length} clubs',
+                        textAlign: TextAlign.left,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                    ),
+                    Text(
+                      '${game.representedPlayers.length}/${game.office.clientCapacity} CLIENTS',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: AppColors.teal,
+                            fontSize: 8,
                           ),
                     ),
-                  ),
-                  Text(
-                    '${game.representedPlayers.length}/${game.office.clientCapacity} CLIENTS',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: AppColors.teal,
-                          fontSize: 8,
-                        ),
-                  ),
-                  IconButton(
-                    key: const Key('clearTalentPoolButton'),
-                    tooltip: 'Clear talent pool',
-                    visualDensity: VisualDensity.compact,
-                    constraints:
-                        const BoxConstraints.tightFor(width: 34, height: 30),
-                    padding: EdgeInsets.zero,
-                    onPressed: talents.isEmpty
-                        ? null
-                        : () => _confirmClearPool(
-                              context,
-                              ref,
-                              talents.length,
-                            ),
-                    icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-                  ),
-                  const Icon(Icons.chevron_right_rounded,
-                      color: AppColors.muted, size: 18),
-                ],
+                    IconButton(
+                      key: const Key('clearTalentPoolButton'),
+                      tooltip: 'Clear talent pool',
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints.tightFor(
+                        width: AppSizes.minTouchTarget,
+                        height: AppSizes.minTouchTarget,
+                      ),
+                      padding: EdgeInsets.zero,
+                      onPressed: talents.isEmpty
+                          ? null
+                          : () => _confirmClearPool(
+                                context,
+                                ref,
+                                talents.length,
+                              ),
+                      icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                    ),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      color: AppColors.muted,
+                      size: 18,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
         CompactTableHeader(
           identityLabel: 'SCOUTED PLAYER',
+          identityIndent: 36,
           trailing: const [
             CompactColumnLabel('AGE', width: 28),
             CompactColumnLabel('OVR', width: 38),
             CompactColumnLabel('POT', width: 38),
-            CompactColumnLabel('SIGN', width: 48),
           ],
         ),
         Expanded(
@@ -92,34 +106,16 @@ class TalentsScreen extends ConsumerWidget {
                     final player = talents[index];
                     return _TalentRow(
                       player: player,
+                      showPotential: game.canViewPotential(player),
                       isAlternate: index.isOdd,
                       onOpen: () =>
                           context.push(AppRoutes.playerDetails(player.id)),
-                      onRecruit: () => _recruit(context, ref, player),
-                      canRecruit: !game.isAgencyAtClientCapacity,
                     );
                   },
                 ),
         ),
       ],
     );
-  }
-
-  void _recruit(BuildContext context, WidgetRef ref, Player player) {
-    final result =
-        ref.read(gameControllerProvider.notifier).recruitPlayer(player.id);
-    final message = switch (result) {
-      RecruitmentResult.success => '${player.name} joined your agency.',
-      RecruitmentResult.noActiveGame => 'Start a career before recruiting.',
-      RecruitmentResult.playerNotFound => 'That player no longer exists.',
-      RecruitmentResult.playerUnavailable =>
-        '${player.name} is no longer available.',
-      RecruitmentResult.officeFull =>
-        'Agency full · upgrade the Office before recruiting another player.',
-    };
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _confirmClearPool(
@@ -170,29 +166,16 @@ class _EmptyTalentPool extends StatelessWidget {
   const _EmptyTalentPool();
 
   @override
-  Widget build(BuildContext context) => Center(
+  Widget build(BuildContext context) => const Align(
+        alignment: Alignment.topLeft,
         child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.travel_explore_rounded,
-                  color: AppColors.muted, size: 30),
-              const SizedBox(height: 8),
-              Text(
-                'Talent pool empty',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 3),
-              Text(
+          padding: EdgeInsets.fromLTRB(13, 16, 13, 0),
+          child: CompactEmptyState(
+            icon: Icons.travel_explore_rounded,
+            title: 'Talent pool empty',
+            message:
                 'Scouts and your Training Ground can discover new prospects.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: AppColors.muted),
-              ),
-            ],
+            accent: AppColors.amber,
           ),
         ),
       );
@@ -202,97 +185,88 @@ class _TalentRow extends StatelessWidget {
   const _TalentRow({
     required this.player,
     required this.isAlternate,
+    required this.showPotential,
     required this.onOpen,
-    required this.onRecruit,
-    required this.canRecruit,
   });
 
   final Player player;
   final bool isAlternate;
+  final bool showPotential;
   final VoidCallback onOpen;
-  final VoidCallback onRecruit;
-  final bool canRecruit;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
+    return CompactRowSurface(
       key: Key('talentCard-${player.id}'),
-      color: isAlternate ? AppColors.panelAlt : AppColors.navy,
-      child: InkWell(
-        onTap: onOpen,
-        child: Container(
-          height: 59,
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: AppColors.slate)),
-          ),
-          child: Row(
-            children: [
-              Container(width: 3, color: AppColors.amber),
-              const SizedBox(width: 7),
-              CompactPositionBadge(label: player.position.shortLabel),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      player.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                          ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${player.position.label}  ·  ${GameFormatters.compactCurrency(player.value)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppColors.muted,
-                            fontSize: 9,
-                          ),
-                    ),
-                  ],
+      railColor: AppColors.amber,
+      isAlternate: isAlternate,
+      onTap: onOpen,
+      semanticLabel:
+          '${player.name}, ${player.position.label}, ${player.age} years old',
+      child: Row(
+        children: [
+          CompactPositionBadge(label: player.position.shortLabel),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  player.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
                 ),
+                const SizedBox(height: 2),
+                Text(
+                  '${player.position.label}  ·  ${GameFormatters.compactCurrency(player.value)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.muted,
+                        fontSize: 9,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            width: 28,
+            child: Text(
+              '${player.age}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.muted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
               ),
-              SizedBox(
-                width: 28,
+            ),
+          ),
+          CompactRatingCell(
+            value: player.ability,
+            color: compactRatingColor(player.ability),
+          ),
+          if (showPotential)
+            CompactRatingCell(
+              value: player.potential,
+              color: AppColors.teal,
+              emphasized: true,
+            )
+          else
+            const SizedBox(
+              width: 38,
+              child: Center(
                 child: Text(
-                  '${player.age}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: AppColors.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  '—',
+                  style: TextStyle(color: AppColors.muted, fontSize: 11),
                 ),
               ),
-              CompactRatingCell(
-                value: player.ability,
-                color: compactRatingColor(player.ability),
-              ),
-              CompactRatingCell(
-                value: player.potential,
-                color: AppColors.teal,
-                emphasized: true,
-              ),
-              SizedBox(
-                width: 48,
-                child: IconButton(
-                  key: Key('recruitPlayerButton-${player.id}'),
-                  tooltip: canRecruit
-                      ? 'Recruit player'
-                      : 'Upgrade Office for more client capacity',
-                  onPressed: canRecruit ? onRecruit : null,
-                  color: AppColors.teal,
-                  icon: const Icon(Icons.person_add_alt_1_rounded, size: 19),
-                ),
-              ),
-            ],
-          ),
-        ),
+            ),
+        ],
       ),
     );
   }

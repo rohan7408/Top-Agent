@@ -6,6 +6,8 @@ class PlayerSeasonStats {
     required this.clubId,
     required this.leagueId,
     required this.season,
+    this.overall = 0,
+    this.marketValue = 0,
     this.appearances = 0,
     this.starts = 0,
     this.minutes = 0,
@@ -22,6 +24,8 @@ class PlayerSeasonStats {
   final String clubId;
   final String leagueId;
   final int season;
+  final int overall;
+  final double marketValue;
   final int appearances;
   final int starts;
   final int minutes;
@@ -35,12 +39,18 @@ class PlayerSeasonStats {
 
   double get averageRating => appearances == 0 ? 0 : totalRating / appearances;
 
-  PlayerSeasonStats applyPerformance(PlayerMatchPerformance performance) {
+  PlayerSeasonStats applyPerformance(
+    PlayerMatchPerformance performance, {
+    int? overall,
+    double? marketValue,
+  }) {
     return PlayerSeasonStats(
       playerId: playerId,
       clubId: clubId,
       leagueId: leagueId,
       season: season,
+      overall: overall ?? this.overall,
+      marketValue: marketValue ?? this.marketValue,
       appearances: appearances + (performance.minutes > 0 ? 1 : 0),
       starts: starts + (performance.started ? 1 : 0),
       minutes: minutes + performance.minutes,
@@ -55,11 +65,37 @@ class PlayerSeasonStats {
     );
   }
 
+  PlayerSeasonStats withSnapshot({
+    required int overall,
+    required double marketValue,
+  }) {
+    return PlayerSeasonStats(
+      playerId: playerId,
+      clubId: clubId,
+      leagueId: leagueId,
+      season: season,
+      overall: overall,
+      marketValue: marketValue,
+      appearances: appearances,
+      starts: starts,
+      minutes: minutes,
+      goals: goals,
+      assists: assists,
+      cleanSheets: cleanSheets,
+      yellowCards: yellowCards,
+      redCards: redCards,
+      playerOfTheMatchAwards: playerOfTheMatchAwards,
+      totalRating: totalRating,
+    );
+  }
+
   Map<String, Object> toJson() => {
         'playerId': playerId,
         'clubId': clubId,
         'leagueId': leagueId,
         'season': season,
+        'overall': overall,
+        'marketValue': marketValue,
         'appearances': appearances,
         'starts': starts,
         'minutes': minutes,
@@ -78,6 +114,8 @@ class PlayerSeasonStats {
       clubId: json['clubId']! as String,
       leagueId: json['leagueId']! as String,
       season: json['season']! as int,
+      overall: (json['overall'] as num?)?.toInt() ?? 0,
+      marketValue: (json['marketValue'] as num?)?.toDouble() ?? 0,
       appearances: json['appearances']! as int,
       starts: json['starts']! as int,
       minutes: json['minutes']! as int,

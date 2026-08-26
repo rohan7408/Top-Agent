@@ -1,4 +1,4 @@
-# Touchline Agent
+# Touchline Agent Game
 
 An Android-first football agent simulation game built with Flutter.
 
